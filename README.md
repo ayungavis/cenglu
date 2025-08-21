@@ -25,7 +25,7 @@ Because you're tired of:
 
 - **Winston** eating your errors and being slow
 - **Pino** requiring a PhD to configure properly
-- **Bunyan** being abandoned since 2017
+- **Bunyan** being abandoned since 2020
 - Your logs leaking credit cards to Datadog
 
 ## Quick Start
