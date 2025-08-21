@@ -1,3 +1,4 @@
+// biome-ignore assist/source/organizeImports: <sort issue>
 export {
   datadogLine,
   datadogObject,
@@ -15,9 +16,9 @@ export {
   createOpenTelemetryAdapter,
   createOtelTraceProvider,
   OpenTelemetryAdapter,
-  type OpenTelemetryOptions,
-  OtelHelpers,
   otelExpressMiddleware,
+  OtelHelpers,
+  type OpenTelemetryOptions,
 } from "./integrations/opentelemetry";
 
 export { createLogger, Logger } from "./logger";

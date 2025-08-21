@@ -6,15 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": false,
-    "experimentalScannerIgnores": [
-      "dist/**",
-      "node_modules/**",
-      "coverage/**",
-      ".claude/**",
-      ".github/**",
-      "examples/**"
-    ]
+    "ignoreUnknown": false
   },
   "formatter": {
     "enabled": true,

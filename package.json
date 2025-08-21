@@ -1,6 +1,6 @@
 {
   "name": "cenglu",
-  "version": "0.4.0",
+  "version": "1.0.0",
   "private": false,
   "license": "MIT",
   "type": "module",
@@ -25,8 +25,8 @@
     "build": "npm run build:esm && npm run build:cjs",
     "test": "vitest",
     "test:watch": "vitest --watch",
-    "lint": "biome check .",
-    "lint:fix": "biome check --write .",
+    "lint": "biome check src tests",
+    "lint:fix": "biome check --write src tests",
     "format": "biome format --write .",
     "check:types": "tsc -p tsconfig.esm.json --noEmit",
     "docs": "typedoc"
