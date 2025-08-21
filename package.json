@@ -1,8 +1,18 @@
 {
   "name": "cenglu",
+  "description": "Fast, zero-dependencies, and secure logger for Node.js that doesn't suck. Built for production, not resumes.",
   "version": "1.0.0",
   "private": false,
   "license": "MIT",
+  "author": "Wahyu Kurniawan <ayungavis@gmail.com>",
+  "homepage": "https://github.com/ayungavis/cenglu#readme",
+  "bugs": {
+    "url": "https://github.com/ayungavis/cenglu/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ayungavis/cenglu.git"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -35,5 +45,36 @@
     "typedoc": "^0.25.13",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"
-  }
+  },
+  "keywords": [
+    "logging",
+    "logger",
+    "log",
+    "log management",
+    "log monitoring",
+    "log aggregation",
+    "log analysis",
+    "log collection",
+    "log shipping",
+    "log forwarding",
+    "log indexing",
+    "log querying",
+    "log visualization",
+    "log alerting",
+    "log correlation",
+    "log enrichment",
+    "log transformation",
+    "log filtering",
+    "log sampling",
+    "log redaction",
+    "log security",
+    "log performance",
+    "log testing",
+    "log development",
+    "log production",
+    "log cloud",
+    "log on-prem",
+    "log open-source",
+    "log nodejs"
+  ]
 }
