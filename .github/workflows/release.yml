@@ -1,0 +1,159 @@
+name: Release to NPM
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  id-token: write  # Required for NPM provenance
+
+jobs:
+  validate-version:
+    name: Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+      
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$TAG_VERSION" >> $GITHUB_OUTPUT
+          echo "Tag version: $TAG_VERSION"
+      
+      - name: Validate package.json version matches tag
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION=${{ steps.version.outputs.version }}
+          
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "Error: package.json version ($PACKAGE_VERSION) does not match tag version ($TAG_VERSION)"
+            exit 1
+          fi
+          
+          echo "✅ Versions match: $PACKAGE_VERSION"
+      
+      - name: Check if version already exists on NPM
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          VERSION=${{ steps.version.outputs.version }}
+          
+          # Check if the version exists on NPM
+          if npm view "$PACKAGE_NAME@$VERSION" version 2>/dev/null; then
+            echo "Error: Version $VERSION of $PACKAGE_NAME already exists on NPM"
+            echo "Please bump the version in package.json and create a new tag"
+            exit 1
+          fi
+          
+          echo "✅ Version $VERSION is not yet published"
+  
+  test:
+    name: Run Tests
+    needs: validate-version
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      
+      - name: Run linter
+        run: bun run lint
+      
+      - name: Check types
+        run: bun run check:types
+      
+      - name: Run tests
+        run: bun run test run
+      
+      - name: Build library
+        run: bun run build
+      
+      - name: Verify build artifacts
+        run: |
+          if [ ! -f "dist/index.mjs" ]; then
+            echo "ESM build artifact not found"
+            exit 1
+          fi
+          if [ ! -f "dist/index.cjs" ]; then
+            echo "CJS build artifact not found"
+            exit 1
+          fi
+          if [ ! -f "dist/index.d.ts" ]; then
+            echo "TypeScript declarations not found"
+            exit 1
+          fi
+  
+  publish:
+    name: Publish to NPM
+    needs: [validate-version, test]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+      
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      
+      - name: Build library
+        run: bun run build
+      
+      - name: Publish to NPM with provenance
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ needs.validate-version.outputs.version }}
+          body: |
+            ## 📦 Published to NPM
+            
+            Version `${{ needs.validate-version.outputs.version }}` has been published to NPM.
+            
+            Install with:
+            ```bash
+            npm install cenglu@${{ needs.validate-version.outputs.version }}
+            # or
+            bun add cenglu@${{ needs.validate-version.outputs.version }}
+            ```
+            
+            View on NPM: https://www.npmjs.com/package/cenglu/v/${{ needs.validate-version.outputs.version }}
+          generate_release_notes: true

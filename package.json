@@ -1,0 +1,41 @@
+{
+  "name": "cenglu",
+  "version": "0.4.0",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "dashboards",
+    "README.md"
+  ],
+  "scripts": {
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build": "npm run build:esm && npm run build:cjs",
+    "test": "vitest",
+    "test:watch": "vitest --watch",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "check:types": "tsc -p tsconfig.esm.json --noEmit",
+    "docs": "typedoc"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.2.0",
+    "@types/node": "^20.14.9",
+    "typedoc": "^0.25.13",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

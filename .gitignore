@@ -1,0 +1,7 @@
+# build & dependencies
+dist
+node_modules
+
+# docs
+*.md
+!README.md

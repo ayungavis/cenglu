@@ -1,0 +1,13 @@
+{
+  "title": "Cenglu (Loki)",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Log rate",
+      "targets": [{ "expr": "sum(rate({job=\"app\"}[5m]))", "refId": "A" }],
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 }
+    }
+  ]
+}
