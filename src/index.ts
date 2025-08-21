@@ -15,9 +15,9 @@ export {
   createOpenTelemetryAdapter,
   createOtelTraceProvider,
   OpenTelemetryAdapter,
-  otelExpressMiddleware,
-  OtelHelpers,
   type OpenTelemetryOptions,
+  OtelHelpers,
+  otelExpressMiddleware,
 } from "./integrations/opentelemetry";
 
 export { createLogger, Logger } from "./logger";
