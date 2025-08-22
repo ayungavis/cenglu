@@ -6,7 +6,7 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: read
+  contents: write  # Required for creating GitHub releases
   id-token: write  # Required for NPM provenance
 
 jobs:
@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      npm-exists: ${{ steps.npm-check.outputs.exists }}
     
     steps:
       - name: Checkout repository
@@ -46,18 +47,19 @@ jobs:
           echo "✅ Versions match: $PACKAGE_VERSION"
       
       - name: Check if version already exists on NPM
+        id: npm-check
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           VERSION=${{ steps.version.outputs.version }}
           
           # Check if the version exists on NPM
           if npm view "$PACKAGE_NAME@$VERSION" version 2>/dev/null; then
-            echo "Error: Version $VERSION of $PACKAGE_NAME already exists on NPM"
-            echo "Please bump the version in package.json and create a new tag"
-            exit 1
+            echo "⚠️ Version $VERSION of $PACKAGE_NAME already exists on NPM"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Version $VERSION is not yet published to NPM"
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
-          
-          echo "✅ Version $VERSION is not yet published"
   
   test:
     name: Run Tests
@@ -109,7 +111,7 @@ jobs:
           fi
   
   publish:
-    name: Publish to NPM
+    name: Publish to NPM and Create Release
     needs: [validate-version, test]
     runs-on: ubuntu-latest
     
@@ -135,11 +137,33 @@ jobs:
         run: bun run build
       
       - name: Publish to NPM with provenance
+        if: needs.validate-version.outputs.npm-exists != 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       
+      - name: Skip NPM publish (already published)
+        if: needs.validate-version.outputs.npm-exists == 'true'
+        run: echo "⚠️ Skipping NPM publish - version ${{ needs.validate-version.outputs.version }} already exists on NPM"
+      
+      - name: Check if GitHub Release exists
+        id: release-check
+        run: |
+          VERSION=${{ needs.validate-version.outputs.version }}
+          
+          # Check if release exists using GitHub CLI
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "⚠️ GitHub Release v${VERSION} already exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ GitHub Release v${VERSION} does not exist yet"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      
       - name: Create GitHub Release
+        if: steps.release-check.outputs.exists != 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: Release ${{ needs.validate-version.outputs.version }}
@@ -157,3 +181,7 @@ jobs:
             
             View on NPM: https://www.npmjs.com/package/cenglu/v/${{ needs.validate-version.outputs.version }}
           generate_release_notes: true
+      
+      - name: Skip GitHub Release (already exists)
+        if: steps.release-check.outputs.exists == 'true'
+        run: echo "⚠️ Skipping GitHub Release creation - release v${{ needs.validate-version.outputs.version }} already exists"
