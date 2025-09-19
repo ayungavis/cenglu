@@ -3,6 +3,8 @@
 [![CI](https://github.com/ayungavis/cenglu/actions/workflows/ci.yml/badge.svg)](https://github.com/ayungavis/cenglu/actions/workflows/ci.yml)
 [![Security Audit](https://github.com/ayungavis/cenglu/actions/workflows/audit.yml/badge.svg)](https://github.com/ayungavis/cenglu/actions/workflows/audit.yml)
 [![CodeQL](https://github.com/ayungavis/cenglu/actions/workflows/codeql.yml/badge.svg)](https://github.com/ayungavis/cenglu/actions/workflows/codeql.yml)
+[![Release](https://github.com/ayungavis/cenglu/actions/workflows/release.yml/badge.svg)](https://github.com/ayungavis/cenglu/actions/workflows/release.yml)
+[![Size Limit](https://github.com/ayungavis/cenglu/actions/workflows/size.yml/badge.svg)](https://github.com/ayungavis/cenglu/actions/workflows/size.yml)
 
 <img src="https://i.ibb.co.com/NnK7bPDL/cenglu.png" alt="cenglu logo">
 
