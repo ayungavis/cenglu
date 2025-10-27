@@ -1,7 +1,9 @@
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
 export interface Bindings {
   [k: string]: unknown;
 }
+
 export interface LogRecord {
   time: number;
   level: LogLevel;
@@ -19,6 +21,7 @@ export interface LogRecord {
   traceId?: string;
   spanId?: string;
 }
+
 export interface Transport {
   write(rec: LogRecord, formatted: string, isError: boolean): void;
   flush?(): Promise<void>;
@@ -40,11 +43,13 @@ export interface TransportOptions {
   bufferSize?: number;
   flushInterval?: number;
 }
+
 export interface ProviderAdapter {
   name: string;
   level?: LogLevel;
   handle(rec: LogRecord): void | Promise<void>;
 }
+
 export interface FileRotationPolicy {
   intervalDays?: number;
   maxBytes?: number;
@@ -53,6 +58,7 @@ export interface FileRotationPolicy {
   compress?: "gzip" | "lz4" | false;
   compressedTtlDays?: number;
 }
+
 export interface FileSinkOptions {
   enabled?: boolean;
   dir?: string;
@@ -65,9 +71,11 @@ export interface FileSinkOptions {
   separateError?: boolean;
   rotation?: FileRotationPolicy;
 }
+
 export interface ConsoleSinkOptions {
   enabled?: boolean;
 }
+
 export interface Theme {
   dim: (s: string) => string;
   gray: (s: string) => string;
@@ -79,19 +87,23 @@ export interface Theme {
   bold: (s: string) => string;
   reset: (s: string) => string;
 }
+
 export interface PrettyOptions {
   enabled?: boolean;
   theme?: Partial<Theme>;
   formatter?: (rec: LogRecord) => string;
 }
+
 export interface StructuredOptions {
   type?: "json" | "ecs" | "datadog" | "splunk";
   map?: (rec: LogRecord) => unknown;
 }
+
 export interface SamplingOptions {
   rates?: Partial<Record<LogLevel, number>>;
   defaultRate?: number;
 }
+
 export interface RedactionPattern {
   pattern: RegExp;
   replacement?: string;

@@ -333,6 +333,133 @@ export function koaMiddleware(
 }
 
 /**
+ * Hono middleware for request logging and context
+ */
+export function honoMiddleware(
+  logger: Logger,
+  options: {
+    logRequests?: boolean;
+    logResponses?: boolean;
+    includeHeaders?: boolean;
+    includeBody?: boolean;
+    correlationIdHeader?: string;
+    generateCorrelationId?: () => string;
+    skip?: (c: any) => boolean;
+  } = {},
+) {
+  const {
+    logRequests = true,
+    logResponses = true,
+    includeHeaders = false,
+    includeBody = false,
+    correlationIdHeader = "x-correlation-id",
+    generateCorrelationId = randomUUID,
+    skip,
+  } = options;
+
+  return async (c: any, next: any) => {
+    // Skip if configured
+    if (skip?.(c)) {
+      return next();
+    }
+
+    // Get or generate correlation ID
+    const correlationId =
+      c.req.header(correlationIdHeader) ||
+      c.req.header("x-request-id") ||
+      generateCorrelationId();
+
+    // Add correlation ID to context and response headers
+    c.set("correlationId", correlationId);
+    c.res.headers.set(correlationIdHeader, correlationId);
+
+    // Create child logger with request context
+    const requestLogger = logger.child({
+      correlationId,
+      method: c.req.method,
+      url: c.req.url,
+      path: c.req.path,
+      ip: c.req.header("x-forwarded-for") || c.req.header("x-real-ip") || "unknown",
+      userAgent: c.req.header("user-agent"),
+    });
+
+    // Attach logger to context
+    c.set("logger", requestLogger);
+
+    // Get logger from context for convenience
+    const reqLogger = c.get("logger");
+
+    // Log request if configured
+    if (logRequests) {
+      const requestData: Record<string, unknown> = {
+        method: c.req.method,
+        url: c.req.url,
+        path: c.req.path,
+        query: Object.fromEntries(c.req.queries()),
+      };
+
+      if (includeHeaders) {
+        requestData.headers = Object.fromEntries(c.req.header());
+      }
+
+      if (includeBody && c.req.body) {
+        try {
+          requestData.body = await c.req.clone().text();
+          if (requestData.body && requestData.body.length > 1000) {
+            requestData.body = `${requestData.body.substring(0, 1000)}...`;
+          }
+        } catch (error) {
+          requestData.body = "[Unable to read body]";
+        }
+      }
+
+      reqLogger.info("Incoming request", requestData);
+    }
+
+    const startTime = Date.now();
+
+    try {
+      await next();
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      reqLogger.error(
+        "Request error",
+        {
+          statusCode: c.res.status || 500,
+          duration,
+        },
+        error,
+      );
+      throw error;
+    }
+
+    // Log response if configured
+    if (logResponses) {
+      const duration = Date.now() - startTime;
+      const responseData: Record<string, unknown> = {
+        statusCode: c.res.status,
+        duration,
+      };
+
+      if (includeBody && c.res.body) {
+        try {
+          responseData.body = c.res.body;
+          if (typeof responseData.body === "string" && responseData.body.length > 1000) {
+            responseData.body = `${responseData.body.substring(0, 1000)}...`;
+          }
+        } catch {}
+      }
+
+      if (c.res.status >= 400) {
+        reqLogger.error("Request failed", responseData);
+      } else {
+        reqLogger.info("Request completed", responseData);
+      }
+    }
+  };
+}
+
+/**
  * Create a correlation ID generator using different strategies
  */
 export function createCorrelationIdGenerator(

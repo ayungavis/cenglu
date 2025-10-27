@@ -28,6 +28,7 @@ export {
   createCorrelationIdGenerator,
   expressMiddleware,
   fastifyPlugin,
+  honoMiddleware,
   koaMiddleware,
 } from "./middleware";
 
