@@ -14,67 +14,83 @@
     "url": "https://github.com/ayungavis/cenglu.git"
   },
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.ts",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.cjs"
+      "types": "./dist/index.d.ts"
+    },
+    "./adapters/hono": {
+      "require": "./dist/adapters/hono.js",
+      "import": "./dist/adapters/hono.mjs",
+      "types": "./dist/adapters/hono.d.ts"
+    },
+    "./adapters/nest": {
+      "require": "./dist/adapters/nest.js",
+      "import": "./dist/adapters/nest.mjs",
+      "types": "./dist/adapters/nest.d.ts"
+    },
+    "./adapters/express": {
+      "require": "./dist/adapters/express.js",
+      "import": "./dist/adapters/express.mjs",
+      "types": "./dist/adapters/express.d.ts"
+    },
+    "./adapters/drizzle": {
+      "require": "./dist/adapters/drizzle.js",
+      "import": "./dist/adapters/drizzle.mjs",
+      "types": "./dist/adapters/drizzle.d.ts"
     }
   },
   "files": [
     "dist",
-    "dashboards",
     "README.md"
   ],
   "scripts": {
-    "build": "./scripts/build.sh",
-    "test": "vitest",
-    "test:watch": "vitest --watch",
-    "lint": "biome check src tests",
-    "lint:fix": "biome check --write src tests",
-    "format": "biome format --write .",
-    "check:types": "tsc -p tsconfig.esm.json --noEmit",
+    "build": "bunup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "bun x ultracite@latest check",
+    "format": "bun x ultracite@latest fix",
+    "typecheck": "tsc --noEmit",
     "docs": "typedoc"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.2.0",
+    "@biomejs/biome": "2.3.4",
+    "@size-limit/preset-small-lib": "^11.2.0",
     "@types/node": "^20.14.9",
+    "@vitest/coverage-v8": "^4.0.8",
+    "bunup": "^0.15.14",
+    "lefthook": "^2.0.2",
+    "size-limit": "^11.2.0",
     "typedoc": "^0.25.13",
     "typescript": "^5.5.4",
+    "ultracite": "6.3.2",
     "vitest": "^2.0.5"
   },
+  "optionalDependencies": {
+    "zlib": "^1.0.5"
+  },
+  "size-limit": [
+    {
+      "path": "dist/index.js",
+      "limit": "10 KB"
+    }
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "keywords": [
-    "logging",
     "logger",
-    "log",
-    "log management",
-    "log monitoring",
-    "log aggregation",
-    "log analysis",
-    "log collection",
-    "log shipping",
-    "log forwarding",
-    "log indexing",
-    "log querying",
-    "log visualization",
-    "log alerting",
-    "log correlation",
-    "log enrichment",
-    "log transformation",
-    "log filtering",
-    "log sampling",
-    "log redaction",
-    "log security",
-    "log performance",
-    "log testing",
-    "log development",
-    "log production",
-    "log cloud",
-    "log on-prem",
-    "log open-source",
-    "log nodejs"
+    "logging",
+    "hono",
+    "nest",
+    "express",
+    "drizzle",
+    "zero-dependency",
+    "performance"
   ]
 }

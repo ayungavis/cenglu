@@ -9,7 +9,7 @@ export default defineConfig({
       reporter: ["text", "html", "json"],
       exclude: ["node_modules/", "dist/", "*.config.ts", "*.config.js"],
     },
-    testTimeout: 10000,
-    hookTimeout: 10000,
+    testTimeout: 10_000,
+    hookTimeout: 10_000,
   },
 });
