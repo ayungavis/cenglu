@@ -1,0 +1,33 @@
+# Source files (we publish dist)
+src/
+
+# Tests
+tests/
+*.test.ts
+*.spec.ts
+vitest.config.ts
+tsconfig.test.json
+
+# Development files
+.github/
+.vscode/
+.idea/
+benchmarks/
+examples/
+docs/
+
+# Config files
+biome.json
+tsconfig.json
+tsup.config.ts
+.gitignore
+.npmignore
+.editorconfig
+
+# Build artifacts
+coverage/
+*.tsbuildinfo
+
+# Misc
+.DS_Store
+*.log

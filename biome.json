@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "extends": ["ultracite/core"],
   "vcs": {
     "enabled": false,
     "clientKind": "git",
@@ -18,7 +19,31 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "nursery": {
+        "useMaxParams": {
+          "level": "error",
+          "options": {
+            "max": 6
+          }
+        }
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "error",
+          "options": {
+            "maxAllowedComplexity": 20
+          }
+        }
+      },
+      "suspicious": {
+        "noBitwiseOperators": {
+          "level": "error",
+          "options": {
+            "allow": ["<<", "&="]
+          }
+        }
+      }
     }
   },
   "javascript": {
@@ -33,6 +58,5 @@
         "organizeImports": "on"
       }
     }
-  },
-  "extends": ["ultracite/core"]
+  }
 }

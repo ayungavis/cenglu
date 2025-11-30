@@ -17,7 +17,10 @@ npm install cenglu
 ```typescript
 import { createLogger } from "cenglu";
 
-const logger = createLogger();
+const logger = createLogger({
+  service: "my-app"
+  level: "info"
+});
 logger.info("server started", { port: 3000 });
 ```
 
@@ -35,14 +38,30 @@ Because you're tired of:
 ### Basic Usage
 
 ```typescript
+import { createLogger } from "cenglu";
+
+// Create a logger
 const logger = createLogger({
+  service: "my-app",
   level: "info",
-  service: "api",
-  version: "1.2.3",
 });
 
-logger.info("user login", { userId: 123 });
-logger.error("payment failed", { orderId: "abc" }, new Error("Card declined"));
+// Basic logging
+logger.info("Application started", { port: 3000 });
+logger.warn("Deprecated API called", { endpoint: "/v1/users" });
+logger.error("Failed to connect", new Error("Connection refused"));
+
+// Child loggers for request context
+const requestLogger = logger.child({ requestId: "abc-123" });
+requestLogger.info("Processing request");
+
+// Fluent API
+logger.with({ userId: 123 }).info("User action", { action: "login" });
+
+// Timer for measuring durations
+const done = logger.time("database-query");
+await db.query("SELECT * FROM users");
+done(); // Logs: "database-query completed" { durationMs: 42 }
 ```
 
 ### Pretty Logs for Development
