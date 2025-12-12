@@ -1,5 +1,4 @@
-import { createLogger } from "cenglu";
-import { expressErrorMiddleware, expressMiddleware } from "cenglu/middleware";
+import { createLogger, expressErrorMiddleware, expressMiddleware } from "cenglu";
 import express from "express";
 import { randomInt } from "node:crypto";
 

@@ -323,7 +323,8 @@ function getLogLevel(
 export function expressMiddleware(
   logger: Logger,
   options: ExpressMiddlewareOptions = {}
-): (req: ExpressRequest, res: ExpressResponse, next: ExpressNextFunction) => void {
+  // @ts-expect-error -- types for express.RequestHandler are incompatible
+): import("express").RequestHandler {
   const opts: Required<ExpressMiddlewareOptions> = {
     ...DEFAULT_OPTIONS,
     ...options,
@@ -495,7 +496,8 @@ export function expressErrorMiddleware(
      */
     continueOnError?: boolean;
   } = {}
-): (err: Error, req: ExpressRequest, res: ExpressResponse, next: ExpressNextFunction) => void {
+  // @ts-expect-error -- types for express.ErrorRequestHandler are incompatible
+): import("express").ErrorRequestHandler {
   const {
     includeStack = process.env.NODE_ENV !== "production",
     formatError,
