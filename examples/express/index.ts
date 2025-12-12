@@ -1,6 +1,7 @@
 import { createLogger } from "cenglu";
 import { expressErrorMiddleware, expressMiddleware } from "cenglu/middleware";
 import express from "express";
+import { randomInt } from "node:crypto";
 
 // Create logger
 const logger = createLogger({
@@ -56,7 +57,7 @@ app.post("/users", (req, res) => {
   req.logger?.info("Creating user", { email: req.body.email });
 
   const user = {
-    id: Math.floor(Math.random() * 1000),
+    id: randomInt(0, 1000),
     ...req.body,
   };
 
