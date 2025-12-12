@@ -1,6 +1,6 @@
 {
   "name": "cenglu",
-  "description": "Fast, zero-dependencies, and secure logger for Node.js that doesn't suck. Built for production, not resumes.",
+  "description": "Fast, zero-dependencies, secure logger for Node.js that doesn't suck. Built for production, not resumes.",
   "version": "1.1.0",
   "type": "module",
   "license": "MIT",
@@ -20,39 +20,39 @@
       "require": "./dist/index.cjs"
     },
     "./context": {
-      "types": "./dist/context.d.ts",
-      "import": "./dist/context.js",
-      "require": "./dist/context.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./testing": {
-      "types": "./dist/testing.d.ts",
-      "import": "./dist/testing.js",
-      "require": "./dist/testing.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./middleware": {
-      "types": "./dist/middleware.d.ts",
-      "import": "./dist/middleware.js",
-      "require": "./dist/middleware.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./plugins": {
-      "types": "./dist/plugins/index.d.ts",
-      "import": "./dist/plugins/index.js",
-      "require": "./dist/plugins/index.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./transports": {
-      "types": "./dist/transports/index.d.ts",
-      "import": "./dist/transports/index.js",
-      "require": "./dist/transports/index.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./format": {
-      "types": "./dist/format.d.ts",
-      "import": "./dist/format.js",
-      "require": "./dist/format.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     },
     "./redaction": {
-      "types": "./dist/redaction.d.ts",
-      "import": "./dist/redaction.js",
-      "require": "./dist/redaction.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     }
   },
   "main": "./dist/index.cjs",

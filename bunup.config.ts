@@ -1,22 +1,13 @@
 import { defineConfig } from "bunup";
 
 export default defineConfig({
-  entry: [
-    "src/index.ts",
-    "src/context.ts",
-    "src/testing.ts",
-    "src/middleware.ts",
-    "src/format.ts",
-    "src/redaction.ts",
-    "src/plugins/index.ts",
-    "src/transports/index.ts",
-  ],
+  entry: ["src/index.ts"],
   format: ["cjs", "esm"],
   dts: true,
   clean: true,
   splitting: false,
-  sourcemap: true,
-  minify: false,
+  sourcemap: false,
+  minify: true,
   outDir: "dist",
   packages: "bundle",
   external: [
