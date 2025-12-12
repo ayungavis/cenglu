@@ -18,24 +18,20 @@ npm install cenglu
 import { createLogger } from "cenglu";
 
 const logger = createLogger({
-  service: "my-app"
-  level: "info"
+  service: "my-app",
+  level: "info",
 });
 logger.info("server started", { port: 3000 });
-```
+````
 
-## Why Another Logger?
+## Why another logger?
 
-Because you're tired of:
+- You're tired of heavy, leaky, or hard-to-configure loggers.
+- cenglu focuses on security (built-in redaction), performance, and a small, predictable API.
 
-- **Winston** eating your errors and being slow
-- **Pino** requiring a PhD to configure properly
-- **Bunyan** being abandoned since 2020
-- Your logs leaking credit cards to Datadog
+## Quick start
 
-## Quick Start
-
-### Basic Usage
+### Basic usage
 
 ```typescript
 import { createLogger } from "cenglu";
@@ -51,31 +47,34 @@ logger.info("Application started", { port: 3000 });
 logger.warn("Deprecated API called", { endpoint: "/v1/users" });
 logger.error("Failed to connect", new Error("Connection refused"));
 
-// Child loggers for request context
+// Child loggers for request context (shares transports/config)
 const requestLogger = logger.child({ requestId: "abc-123" });
 requestLogger.info("Processing request");
 
-// Fluent API
+// Lightweight bound logger for temporary bindings
 logger.with({ userId: 123 }).info("User action", { action: "login" });
 
 // Timer for measuring durations
 const done = logger.time("database-query");
 await db.query("SELECT * FROM users");
 done(); // Logs: "database-query completed" { durationMs: 42 }
-```
 
-### Pretty Logs for Development
+// Timer result helpers
+done.endWithContext({ rowCount: 10 });
+const ms = done.elapsed();
+````
+
+### Pretty logs for development
 
 ```typescript
 const logger = createLogger({
   pretty: { enabled: process.env.NODE_ENV !== "production" },
 });
 
-// Outputs colored, formatted logs in dev
-// Outputs JSON in production
-```
+// Outputs colored, formatted logs in dev; JSON in production
+````
 
-### Stop Leaking Passwords
+### Stop leaking secrets
 
 ```typescript
 const logger = createLogger({
@@ -84,15 +83,15 @@ const logger = createLogger({
 
 logger.info("user registered", {
   email: "john@example.com",
-  password: "super-secret", // [REDACTED]
-  creditCard: "4242-4242-4242", // [REDACTED_CARD]
-  apiKey: "sk_live_abc123", // [REDACTED_API_KEY]
+  password: "super-secret", // -> redacted
+  creditCard: "4242-4242-4242", // -> redacted
+  apiKey: "sk_live_abc123", // -> redacted
 });
 ```
 
-## Real-World Examples
+## Real-world examples
 
-### Express App with Request Tracking
+### Express app with request tracking
 
 ```typescript
 import { createLogger, expressMiddleware } from "cenglu";
@@ -107,7 +106,7 @@ app.use(
 );
 
 app.post("/payment", (req, res) => {
-  // req.logger automatically includes request ID
+  // req.logger is bound to the request (includes requestId)
   req.logger.info("processing payment", { amount: req.body.amount });
 
   try {
@@ -121,12 +120,13 @@ app.post("/payment", (req, res) => {
 });
 ```
 
-### Microservice with Distributed Tracing
+### Microservice with distributed tracing
 
 ```typescript
 const logger = createLogger({
   service: "order-service",
   correlationId: () => crypto.randomUUID(),
+  traceProvider: () => ({ traceId: /* from tracer */ "", spanId: "" }),
 });
 
 // All logs include correlation ID automatically
@@ -144,20 +144,20 @@ async function processOrder(order) {
 }
 ```
 
-### High-Volume Service with Batching
+### High-volume service with batching (adapter example)
 
 ```typescript
 import { createLogger, createHttpTransport, createBufferedTransport } from "cenglu";
 
-// Send logs to Datadog in batches
+// Build a buffered transport to send batches to Datadog
 const transport = createBufferedTransport(
   createHttpTransport("datadog", {
     apiKey: process.env.DD_API_KEY,
   }),
   {
-    bufferSize: 1000, // Buffer up to 1000 logs
-    flushInterval: 5000, // Flush every 5 seconds
-    maxBatchSize: 100, // Send 100 logs per request
+    bufferSize: 1000,
+    flushInterval: 5000,
+    maxBatchSize: 100,
   }
 );
 
@@ -165,98 +165,140 @@ const logger = createLogger({
   level: "info",
   adapters: [
     {
-      name: "datadog",
+      name: "datadog-adapter",
+      // adapters can be sync or async (return Promise)
       handle: async (record) => transport.write(record, JSON.stringify(record), false),
     },
   ],
 });
-
-// Handles 10,000+ logs/second without breaking a sweat
 ```
 
-## Features That Actually Matter
+## Features that matter
 
-### 🔒 Security First
+### Security-first redaction
 
-Automatically redacts sensitive data. No more credit cards in your logs.
+- Built-in patterns for common secrets (credit cards, emails, JWTs, API keys, passwords).
+- Redaction applies to `msg`, `context`, and `err` via the `Redactor`.
+- `redaction` options support `paths`, `patterns`, and a `customRedactor` function.
+
+### Fast and predictable
+
+- Designed for high throughput and low overhead.
+- Sampling support to reduce verbose log volume.
+
+### Change log level without restart
+
+- Programmatically: `logger.setLevel("debug")` and `logger.getLevel()`.
+- `logger.isLevelEnabled(level)` is provided to guard expensive computations.
+
+### Ship to any backend
+
+- Adapters and transports let you forward logs to custom destinations.
+- Adapters may include an optional `level` to filter which records they receive.
+
+### Plugin system
+
+- Plugins are initialized in order and may implement hooks:
+  - `onInit(logger)`
+  - `onRecord(record)` — can return `null` to drop a record, return a transformed `record`, or return `undefined` to leave it unchanged.
+  - `onFormat(record, formatted)` — may replace formatted output
+  - `onWrite(record, formatted)`
+  - `onFlush()`
+  - `onClose()`
+- Plugin errors are caught and written to stderr; they don't crash the process.
+
+### File transport configuration & rotation
+
+- File transport is disabled by default (enable with options or env).
+- Rotation options can be set via environment variables:
+  - `LOG_ROTATE_DAYS` — rotation interval in days
+  - `LOG_MAX_BYTES` — maximum bytes before rotation
+  - `LOG_MAX_FILES` — number of rotated files to keep
+  - `LOG_COMPRESS` — "gzip" to compress rotated files, "false"/"0" to disable compression
+  - `LOG_RETENTION_DAYS` — how long to keep rotated logs
+  - `LOG_DIR` — directory to write logs
+- The file transport supports writing a separate errors file when configured.
+
+## API reference
 
 ```typescript
-// Built-in patterns for:
-// - Credit cards, SSNs, emails
-// - JWT tokens, API keys, passwords
-// - AWS credentials, private keys
+createLogger(options?)
 
 const logger = createLogger({
+  level: "info", // trace|debug|info|warn|error|fatal
+  service: "my-app",
+  version: "1.0.0",
+  env: "production",
+
+  // Redaction
   redaction: {
     enabled: true,
-    paths: ["password", "token", "ssn"],
-    customRedactor: (value, key) => {
-      if (key === "phone") return value.replace(/\d{3}/, "***");
-      return value;
-    },
+    paths: ["password"],
+    patterns: [{ pattern: /secret/gi, replacement: "[SECRET]" }],
   },
+
+  // Structured output
+  structured: {
+    type: "json", // json|ecs|datadog|splunk|logfmt
+    transform: (record) => ({ ...record, extra: true }), // optional transform before stringifying
+  },
+
+  // Pretty printing
+  pretty: {
+    enabled: true,
+    theme: {},
+    formatter: (record) => String(record.msg),
+  },
+
+  // Sampling
+  sampling: {
+    rates: { trace: 0.1, debug: 0.5 },
+    defaultRate: 1,
+  },
+
+  correlationId: () => crypto.randomUUID(),
+  traceProvider: () => ({ traceId: "abc", spanId: "def" }),
+
+  // Test helpers
+  now: Date.now,
+  random: Math.random,
+  useAsyncContext: true,
+
+  adapters: [{ name: "my-adapter", handle: (record) => {/* ... */} }],
+  transports: [/* Transport instances */],
+  plugins: [/* LoggerPlugin instances */],
 });
 ```
 
-### ⚡ Actually Fast
+## Logger instance methods
 
-```
-Benchmark (1M logs):
-cenglu:       1.2s
-winston:      8.4s
-bunyan:       3.1s
-pino:         0.9s (but good luck configuring it)
-```
+- `logger.trace(message, [context], [error])`
+- `logger.debug(message, [context], [error])`
+- `logger.info(message, [context], [error])`
+- `logger.warn(message, [context], [error])`
+- `logger.error(message, [context], [error])`
+- `logger.fatal(message, [context], [error])`
 
-With batching enabled:
+- `logger.with(context)` — returns a lightweight `BoundLogger` that binds context for single-call convenience.
+- `logger.child(bindings)` — creates a child `Logger` that shares transports/config but merges new bindings into the logger state.
+  - Child loggers share resources; do not `close()` child loggers directly — close the parent.
+- `logger.logAt(level, msg, context?)` — dynamic-level logging.
+- `logger.ifTrace(fn)`, `logger.ifDebug(fn)`, `logger.ifInfo(fn)` — conditional helpers that run `fn` only if that level is enabled. `fn` should return `[msg, context?]`.
+- `logger.time(label, context?)` — returns a callable timer that logs the completed duration when called. The timer also exposes:
+  - `.end()` — same as calling the timer
+  - `.elapsed()` — returns elapsed milliseconds
+  - `.endWithContext(extraContext)` — ends and logs with merged context
+- `logger.setLevel(level)` — validate and set a new minimum level
+- `logger.getLevel()` — read the current level
+- `logger.isLevelEnabled(level)` — true if logs at `level` would be emitted
+- `await logger.flush()` — flush plugins and transports
+- `await logger.close()` — flush, then close plugins and transports (parent only)
 
-- 50,000 logs/second sustained
-- 100,000 logs/second burst
-- < 50MB memory overhead
-
-### 🔧 Change Log Levels Without Restarting
-
-```typescript
-// Via HTTP API
-curl -X PUT http://localhost:3001/config/global \
-  -d '{"level": "debug"}'
-
-// Via signals (perfect for containers)
-kill -USR1 <pid>  # Increase verbosity
-kill -USR2 <pid>  # Decrease verbosity
-
-// Via config file (auto-reloads)
-echo '{"global": "debug"}' > log-config.json
-```
-
-### 📊 Ship to Anywhere
-
-```typescript
-// Datadog
-const ddTransport = createHttpTransport("datadog", {
-  apiKey: process.env.DD_API_KEY,
-});
-
-// Splunk
-const splunkTransport = createHttpTransport("splunk", {
-  url: "https://splunk.example.com:8088",
-  apiKey: process.env.SPLUNK_TOKEN,
-});
-
-// Your custom endpoint
-const customTransport = new HttpTransport({
-  url: "https://api.example.com/logs",
-  auth: { type: "bearer", credentials: "token" },
-  transform: (records) => ({ logs: records }),
-});
-```
-
-## Common Patterns
+## Advanced patterns
 
 ### Testing
 
 ```typescript
-// In tests, capture logs instead of printing them
 const logs = [];
 const logger = createLogger({
   adapters: [
@@ -267,247 +309,78 @@ const logger = createLogger({
   ],
 });
 
-// Your test
-expect(logs).toContainEqual(
-  expect.objectContaining({
-    level: "error",
-    msg: "payment failed",
-  })
-);
+expect(logs).toContainEqual(expect.objectContaining({ level: "error", msg: "payment failed" }));
 ```
 
-### Debugging Production Issues
+### Plugins
 
 ```typescript
-// Temporarily enable debug logs for specific module
-curl -X PUT http://localhost:3001/config/logger/database \
-  -d '{"level": "trace"}'
-
-// Check what's configured
-curl http://localhost:3001/config
-
-// Disable when done
-curl -X DELETE http://localhost:3001/config/logger/database
+const auditPlugin = {
+  name: "audit",
+  order: 50,
+  onInit(logger) { /* called once */ },
+  onRecord(record) {
+    // Return null to drop, return transformed record or undefined to keep
+    if (record.context?.sensitive) return null;
+    return record;
+  },
+  onFormat(record, formatted) { return formatted; },
+  onWrite(record, formatted) { /* called after write */ },
+  onFlush() { /* optional async */ },
+  onClose() { /* optional async */ },
+};
 ```
 
-### Structured Metadata
+### Adapters
 
 ```typescript
-// Add context that follows through child loggers
-const logger = createLogger()
-  .child({ requestId: req.id })
-  .child({ userId: req.user.id })
-  .child({ feature: "checkout" });
-
-// Every log includes all parent context
-logger.info("processing");
-// { requestId: "123", userId: "456", feature: "checkout", msg: "processing" }
-```
-
-## Migration Guide
-
-### From Winston
-
-```typescript
-// Before (Winston)
-const winston = require("winston");
-const logger = winston.createLogger({
-  level: "info",
-  format: winston.format.json(),
-  transports: [new winston.transports.Console()],
-});
-
-// After (cenglu)
-import { createLogger } from "cenglu";
-const logger = createLogger({ level: "info" });
-```
-
-### From Pino
-
-```typescript
-// Before (Pino)
-const pino = require("pino");
-const logger = pino({
-  level: "info",
-  redact: ["password"],
-  transport: { target: "pino-pretty" },
-});
-
-// After (cenglu)
-import { createLogger } from "cenglu";
-const logger = createLogger({
-  level: "info",
-  redaction: { paths: ["password"] },
-  pretty: { enabled: true },
-});
-```
-
-## Performance Tips
-
-### Do This
-
-```typescript
-// ✅ Use child loggers for context
-const userLogger = logger.child({ userId: 123 });
-userLogger.info("action");
-
-// ✅ Batch logs in high-volume scenarios
-const buffered = createBufferedTransport(transport, {
-  bufferSize: 1000,
-});
-
-// ✅ Sample verbose logs
-const logger = createLogger({
-  sampling: { rates: { trace: 0.1 } },
-});
-```
-
-### Don't Do This
-
-```typescript
-// ❌ Don't stringify in hot paths
-logger.info(`User ${JSON.stringify(user)} logged in`);
-
-// ❌ Don't create loggers in loops
-for (const item of items) {
-  const logger = createLogger(); // NO!
-}
-
-// ❌ Don't log massive objects
-logger.info("response", entireDatabase); // 💀
+const myAdapter = {
+  name: "metrics",
+  level: "info", // optional level threshold
+  handle(record) {
+    metricsClient.send(record);
+  },
+};
 ```
 
 ## Troubleshooting
 
-### Logs Not Showing Up?
+### Logs not showing?
 
-```typescript
-// Check the log level
-console.log(logger.level); // Is it too high?
+- Confirm your logger level: `logger.getLevel()` isn't higher than the messages you expect.
+- Ensure transports and adapters are configured and not closed.
+- Call `await logger.flush()` before process exit.
 
-// Force flush before exit
-process.on("exit", () => logger.flush());
+### Memory leaks?
 
-// Enable debug mode
-const logger = createLogger({
-  level: "trace",
-  pretty: { enabled: true },
-});
-```
+- Ensure you call `await logger.close()` on shutdown to close transports and plugins.
+- Avoid very large buffers in buffered transports; reduce `bufferSize` or flush interval if needed.
 
-### Memory Leak?
+### Logs too big?
 
-```typescript
-// You're probably not closing transports
-await logger.close(); // Do this on shutdown
+- Use redaction and plugins/adapters to truncate or transform large payloads before forwarding.
 
-// Or buffering too much
-const transport = createBufferedTransport(base, {
-  bufferSize: 100, // Lower buffer size
-  flushInterval: 1000, // Flush more frequently
-});
-```
-
-### Logs Too Big?
-
-```typescript
-// Limit log size
-const logger = createLogger({
-  adapters: [
-    {
-      name: "size-limiter",
-      handle: (record) => {
-        if (JSON.stringify(record).length > 10000) {
-          record.msg = "Log too large, truncated";
-          record.context = { truncated: true };
-        }
-        // Forward to actual transport
-      },
-    },
-  ],
-});
-```
-
-## API Reference
-
-### `createLogger(options?)`
-
-Creates a new logger instance.
-
-```typescript
-const logger = createLogger({
-  level: "info", // trace|debug|info|warn|error|fatal
-  service: "my-app", // Service name
-  version: "1.0.0", // Service version
-  env: "production", // Environment
-
-  // Redaction
-  redaction: {
-    enabled: true,
-    paths: ["password"],
-    patterns: [{ pattern: /secret/gi, replacement: "[SECRET]" }],
-  },
-
-  // Output format
-  structured: {
-    type: "json", // json|ecs|datadog|splunk
-  },
-
-  // Pretty printing
-  pretty: {
-    enabled: true,
-  },
-
-  // Sampling
-  sampling: {
-    rates: { trace: 0.1, debug: 0.5 },
-  },
-
-  // Correlation
-  correlationId: () => crypto.randomUUID(),
-});
-```
-
-### Logger Methods
-
-```typescript
-logger.trace(message, [context], [error]);
-logger.debug(message, [context], [error]);
-logger.info(message, [context], [error]);
-logger.warn(message, [context], [error]);
-logger.error(message, [context], [error]);
-logger.fatal(message, [context], [error]);
-
-logger.child(context); // Create child with additional context
-logger.flush(); // Flush all pending logs
-logger.close(); // Close all transports
-```
-
-## Production Checklist
+## Production checklist
 
 - [ ] Enable redaction for PII
-- [ ] Set up error alerting for `error` and `fatal` logs
-- [ ] Configure batching for high-volume services
-- [ ] Add correlation IDs for distributed tracing
-- [ ] Set up runtime config endpoint for debugging
-- [ ] Test graceful shutdown with `logger.flush()`
-- [ ] Monitor memory usage if using buffered transports
+- [ ] Configure batching/adapters for high-volume ingestion
+- [ ] Add correlation IDs for distributed traces
+- [ ] Test `logger.flush()` and `logger.close()` during graceful shutdown
+- [ ] Monitor memory if using buffered transports
 - [ ] Set appropriate sampling rates for verbose logs
 
 ## Contributing
 
-Found a bug? Have an idea? PRs welcome!
-
 ```bash
 git clone https://github.com/yourusername/cenglu
 cd cenglu
-npm install
-npm test
+bun install
+bun run test
 ```
 
 ## License
 
-MIT - Do whatever you want with it.
+MIT
 
 ## Support
 
