@@ -227,7 +227,7 @@ export function fastifyPlugin(
   options: FastifyPluginOptions,
   done: (err?: Error) => void
 ): void {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+  const opts: Required<FastifyPluginOptions> = { ...DEFAULT_OPTIONS, ...options };
   const { logger } = opts;
 
   // Decorate request with logger and correlationId
@@ -235,14 +235,14 @@ export function fastifyPlugin(
   fastify.decorateRequest("correlationId", "");
 
   // Store for tracking request start times (outside AsyncLocalStorage)
-  const requestTimes = new WeakMap<FastifyRequest, number>();
+  const requestTimes: WeakMap<FastifyRequest, number> = new WeakMap<FastifyRequest, number>();
 
   // onRequest hook - runs first
   // biome-ignore lint/suspicious/useAwait: async: fastify hooks can be sync or async
   // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: needed for logic
   fastify.addHook("onRequest", async (request: FastifyRequest, reply: FastifyReply) => {
     // Check if we should skip
-    const path = request.routerPath || request.url.split("?")[0];
+    const path: string | undefined = request.routerPath || request.url.split("?")[0];
     if (shouldIgnorePath(path, opts.ignorePaths)) {
       return;
     }
@@ -252,7 +252,7 @@ export function fastifyPlugin(
     }
 
     // Extract or generate correlation ID
-    let correlationId = getHeader(request.headers, opts.correlationIdHeader);
+    let correlationId: string | undefined = getHeader(request.headers, opts.correlationIdHeader);
 
     if (!correlationId) {
       correlationId =
@@ -269,7 +269,7 @@ export function fastifyPlugin(
     request.correlationId = correlationId;
 
     // Create child logger
-    const requestLogger = logger.child({
+    const requestLogger: Logger = logger.child({
       correlationId,
       method: request.method,
       path,
@@ -321,7 +321,7 @@ export function fastifyPlugin(
   // biome-ignore lint/suspicious/useAwait: async: fastify hooks can be sync or async
   fastify.addHook("onResponse", async (request: FastifyRequest, reply: FastifyReply) => {
     // Check if we should skip
-    const path = request.routerPath || request.url.split("?")[0];
+    const path: string | undefined = request.routerPath || request.url.split("?")[0];
     if (shouldIgnorePath(path, opts.ignorePaths)) {
       return;
     }
@@ -332,9 +332,9 @@ export function fastifyPlugin(
 
     // Log response
     if (opts.logResponses && request.logger) {
-      const startTime = requestTimes.get(request);
-      const duration = startTime ? Date.now() - startTime : reply.getResponseTime();
-      const level = getLogLevel(reply.statusCode);
+      const startTime: number | undefined = requestTimes.get(request);
+      const duration: number = startTime ? Date.now() - startTime : reply.getResponseTime();
+      const level: "info" | "warn" | "error" = getLogLevel(reply.statusCode);
 
       request.logger[level](opts.responseMessage(request, reply, duration), {
         statusCode: reply.statusCode,
@@ -343,7 +343,7 @@ export function fastifyPlugin(
     }
   });
 
-  // onError hook
+  // onError hook - runs when a route throws
   // biome-ignore lint/suspicious/useAwait: async: fastify hooks can be sync or async
   fastify.addHook("onError", async (request: FastifyRequest, reply: FastifyReply, error: Error) => {
     if (request.logger) {
@@ -356,7 +356,7 @@ export function fastifyPlugin(
   done();
 }
 
-export const createFastifyPlugin = fastifyPlugin;
+export const createFastifyPlugin: typeof fastifyPlugin = fastifyPlugin;
 
 // Add fastify-plugin metadata
 (fastifyPlugin as unknown as { [key: symbol]: unknown })[Symbol.for("skip-override")] = true;

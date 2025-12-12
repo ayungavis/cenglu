@@ -204,7 +204,7 @@ export function httpMiddleware(
   };
 }
 
-export const createHttpMiddleware = httpMiddleware;
+export const createHttpMiddleware: typeof httpMiddleware = httpMiddleware;
 
 /**
  * Wrap an HTTP handler with logging middleware

@@ -39,7 +39,10 @@ export function getDefaultLevel(): LogLevel {
   return getEnvLevel() ?? (process.env.NODE_ENV === "production" ? "info" : "debug");
 }
 
-export function extractError(err: unknown, seen = new WeakSet<object>()): ErrorInfo {
+export function extractError(
+  err: unknown,
+  seen: WeakSet<object> = new WeakSet<object>()
+): ErrorInfo {
   // Handle Error instances
   if (isError(err)) {
     // Prevent circular reference in error cause chain

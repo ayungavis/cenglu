@@ -9,7 +9,7 @@ export function renderTree(
   obj: Record<string, unknown>,
   options: TreeOptions = {},
   prefix = "",
-  visited = new WeakSet<object>(),
+  visited: WeakSet<object> = new WeakSet<object>(),
   depth = 0
 ): string[] {
   const opts = { ...DEFAULT_TREE_OPTIONS, ...options };
@@ -34,7 +34,7 @@ export function renderTree(
   const entries = Object.entries(obj);
   const lines: string[] = [];
 
-  entries.forEach(([key, value], index) => {
+  entries.forEach(([key, value]: [string, unknown], index: number) => {
     const isLast = index === entries.length - 1;
     const branch = isLast ? "└─" : "├─";
     const nextPrefix = prefix + (isLast ? "   " : "│  ");
@@ -141,12 +141,14 @@ export function formatArray(
 
   // Check if array contains only primitives
   const allPrimitives = arr.every(
-    (item) => item === null || (typeof item !== "object" && typeof item !== "function")
+    (item: unknown) => item === null || (typeof item !== "object" && typeof item !== "function")
   );
 
   // Short primitive arrays can be inline
   if (allPrimitives && arr.length <= 5) {
-    const items = arr.map((item) => (typeof item === "string" ? `"${item}"` : String(item)));
+    const items = arr.map((item: unknown) =>
+      typeof item === "string" ? `"${item}"` : String(item)
+    );
     const inline = `[${items.join(", ")}]`;
     if (inline.length <= 80) {
       return inline;
@@ -158,7 +160,7 @@ export function formatArray(
 
   const lines: string[] = [];
 
-  displayItems.forEach((item, index) => {
+  displayItems.forEach((item: unknown, index: number) => {
     const isLast = index === displayItems.length - 1 && arr.length <= opts.maxArrayLength;
     const branch = isLast ? "└─" : "├─";
     const nextPrefix = prefix + (isLast ? "   " : "│  ");
@@ -258,8 +260,8 @@ export function formatErrorPretty(err: ErrorInfo, theme: Theme): string[] {
     const stackLines = err.stack
       .split("\n")
       .slice(1) // Skip the first line (error message)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+      .map((line: string) => line.trim())
+      .filter((line: string) => line.length > 0);
 
     for (const line of stackLines) {
       lines.push(`   ${theme.gray(line)}`);
@@ -270,7 +272,7 @@ export function formatErrorPretty(err: ErrorInfo, theme: Theme): string[] {
   if (err.cause) {
     lines.push(`   ${theme.dim("caused by:")}`);
     const causeLines = formatErrorPretty(err.cause, theme);
-    lines.push(...causeLines.map((line) => `   ${line}`));
+    lines.push(...causeLines.map((line: string) => `   ${line}`));
   }
 
   return lines;

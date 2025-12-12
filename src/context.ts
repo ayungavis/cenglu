@@ -666,8 +666,14 @@ function generateNanoId(size = 21): string {
  *   }
  * }
  */
-export function withContext(context: Partial<LogContext>) {
-  return (_target: unknown, _propertyKey: string, descriptor: PropertyDescriptor) => {
+export function withContext(
+  context: Partial<LogContext>
+): (_target: unknown, _propertyKey: string, descriptor: PropertyDescriptor) => PropertyDescriptor {
+  return (
+    _target: unknown,
+    _propertyKey: string,
+    descriptor: PropertyDescriptor
+  ): PropertyDescriptor => {
     const originalMethod = descriptor.value;
 
     descriptor.value = function (...args: unknown[]) {
@@ -691,8 +697,12 @@ export function withContext(context: Partial<LogContext>) {
  */
 export function withBindings<TArgs extends unknown[]>(
   extractBindings: (...args: TArgs) => Bindings
-) {
-  return (_target: unknown, _propertyKey: string, descriptor: PropertyDescriptor) => {
+): (_target: unknown, _propertyKey: string, descriptor: PropertyDescriptor) => PropertyDescriptor {
+  return (
+    _target: unknown,
+    _propertyKey: string,
+    descriptor: PropertyDescriptor
+  ): PropertyDescriptor => {
     const originalMethod = descriptor.value;
 
     descriptor.value = function (...args: TArgs) {

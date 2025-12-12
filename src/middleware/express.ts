@@ -464,7 +464,7 @@ export function expressMiddleware(
   };
 }
 
-export const createExpressMiddleware = expressMiddleware;
+export const createExpressMiddleware: typeof expressMiddleware = expressMiddleware;
 
 /**
  * Express error handling middleware

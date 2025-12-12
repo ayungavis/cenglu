@@ -406,7 +406,7 @@ export function koaMiddleware(
   };
 }
 
-export const createKoaMiddleware = koaMiddleware;
+export const createKoaMiddleware: typeof koaMiddleware = koaMiddleware;
 
 /**
  * Koa error handling middleware
