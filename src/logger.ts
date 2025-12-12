@@ -232,6 +232,15 @@ export class Logger {
   private createTransports(options: LoggerOptions): Transport[] {
     const transports: Transport[] = [];
 
+    // If a test transport was registered globally (by createTestLogger),
+    // include it only when the caller did NOT explicitly pass transports.
+    // This avoids interfering with code that supplies its own transports.
+    // biome-ignore lint/suspicious/noExplicitAny: testing utility
+    const testTransport = (globalThis as any).__CENG_LU_TEST_TRANSPORT__ as Transport | undefined;
+    if (testTransport && options.transports === undefined) {
+      transports.push(testTransport);
+    }
+
     // Console transport (enabled by default)
     if (options.console?.enabled ?? true) {
       transports.push(new ConsoleTransport(options.console));
@@ -643,22 +652,44 @@ export class Logger {
     let context: Bindings | undefined;
     let error: unknown;
 
+    const looksLikeError = (v: unknown): boolean =>
+      typeof v === "object" &&
+      v !== null &&
+      (("message" in (v as Record<string, unknown>) &&
+        (v as Record<string, unknown>).message !== undefined) ||
+        "name" in (v as Record<string, unknown>) ||
+        "stack" in (v as Record<string, unknown>) ||
+        "code" in (v as Record<string, unknown>));
+
     if (isError(arg1)) {
+      // First arg is an Error instance
       error = arg1;
       if (isPlainObject(arg2)) {
         context = arg2 as Bindings;
       }
     } else if (isPlainObject(arg1)) {
-      context = arg1 as Bindings;
-      if (isError(arg2)) {
-        error = arg2;
+      // Plain object first arg: decide whether it's an error-like object or context
+      if (looksLikeError(arg1)) {
+        error = arg1;
+        // If a second arg is a plain object, treat it as context
+        if (isPlainObject(arg2)) {
+          context = arg2 as Bindings;
+        }
+      } else {
+        // Treat as context
+        context = arg1 as Bindings;
+        if (isError(arg2)) {
+          error = arg2;
+        }
       }
     } else if (arg1 !== undefined) {
-      // Non-object, non-error first arg
-      if (isError(arg2)) {
-        error = arg2;
-      } else if (isPlainObject(arg2)) {
+      // Non-object, non-error first arg (e.g. primitive): treat it as an error value
+      // If arg2 is a plain object, treat it as context; if arg2 is an Error prefer that as the error.
+      error = arg1;
+      if (isPlainObject(arg2)) {
         context = arg2 as Bindings;
+      } else if (isError(arg2)) {
+        error = arg2;
       }
     }
 

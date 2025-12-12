@@ -427,6 +427,11 @@ export function createTestLogger(options: TestLoggerOptions = {}): TestLoggerRes
   const transport = new TestTransport();
   transport.debug = debug;
 
+  // Make the test transport discoverable globally during tests so that
+  // subsequent createLogger() calls without explicit transports will include it.
+  // biome-ignore lint/suspicious/noExplicitAny: needed for global
+  (globalThis as any).__CENG_LU_TEST_TRANSPORT__ = transport;
+
   const time = new MockTime(startTime);
   const random = new MockRandom(randomValues);
 
@@ -445,6 +450,13 @@ export function createTestLogger(options: TestLoggerOptions = {}): TestLoggerRes
     transport.reset();
     time.reset(startTime);
     random.reset();
+    // Remove the global test transport if it's still pointing to this one.
+    // biome-ignore lint/suspicious/noExplicitAny: needed for global
+    if ((globalThis as any).__CENG_LU_TEST_TRANSPORT__ === transport) {
+      // biome-ignore lint/suspicious/noExplicitAny: needed for global
+      // biome-ignore lint/performance/noDelete: cleanup
+      delete (globalThis as any).__CENG_LU_TEST_TRANSPORT__;
+    }
   };
 
   return { logger, transport, time, random, reset };
