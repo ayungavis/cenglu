@@ -2,7 +2,7 @@ import { LEVEL_VALUES } from "./constants";
 import type { ErrorInfo, LogLevel } from "./types";
 
 export function isValidLevel(level: unknown): level is LogLevel {
-  return typeof level === "string" && level in LEVEL_VALUES;
+  return typeof level === "string" && Object.hasOwn(LEVEL_VALUES, level);
 }
 
 export function compareLevels(a: LogLevel, b: LogLevel): number {
