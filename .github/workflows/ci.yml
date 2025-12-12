@@ -45,7 +45,7 @@ jobs:
 
       - name: Verify build artifacts
         run: |
-          if [ ! -f "dist/index.mjs" ]; then
+          if [ ! -f "dist/index.js" ]; then
             echo "ESM build artifact not found"
             exit 1
           fi
