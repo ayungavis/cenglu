@@ -117,14 +117,14 @@ jobs:
         with:
           script: |
             const distSize = '${{ steps.size.outputs.dist_size_kb }}';
-            const packageSize = '${{ steps.size.outputs.package_size }}';
+            const packageSize = '${{ steps.size.outputs.package_size_kb }}';
 
             const comment = `## 📊 Package Size Report
 
             | Metric | Size |
             |--------|------|
             | Build Output | ${distSize} KB |
-            | NPM Package | ${packageSize} |
+            | NPM Package | ${packageSize} KB |
 
             <details>
             <summary>Size Limits</summary>

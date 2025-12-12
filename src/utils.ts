@@ -27,6 +27,7 @@ export function hasKeys(obj: object): boolean {
       return true;
     }
   }
+
   return false;
 }
 

@@ -387,15 +387,20 @@ export interface TestLoggerOptions extends Partial<LoggerOptions> {
  * - Trace level enabled (capture all logs)
  *
  * @example
- * import { describe, it, expect, beforeEach } from "vitest";
+ * import { describe, it, expect, beforeEach, afterEach } from "vitest";
  * import { createTestLogger } from "cenglu/testing";
  *
  * describe("UserService", () => {
- *   let logger: Logger;
- *   let transport: TestTransport;
+ *   let logger, transport;
  *
  *   beforeEach(() => {
  *     ({ logger, transport } = createTestLogger());
+ *   });
+ *
+ *   // Ensure the global test transport and any mocks are cleaned up after
+ *   // each test to avoid cross-test contamination (especially with parallel tests).
+ *   afterEach(() => {
+ *     logger.reset();
  *   });
  *
  *   it("logs user creation", async () => {
@@ -405,17 +410,9 @@ export interface TestLoggerOptions extends Partial<LoggerOptions> {
  *     expect(transport.hasLog("info", "User created")).toBe(true);
  *     expect(transport.last()?.context?.email).toBe("test@example.com");
  *   });
- *
- *   it("logs errors correctly", async () => {
- *     const service = new UserService(logger);
- *
- *     await expect(service.createUser({ email: "" }))
- *       .rejects.toThrow("Invalid email");
- *
- *     expect(transport.hasError("ValidationError")).toBe(true);
- *   });
  * });
  */
+
 export function createTestLogger(options: TestLoggerOptions = {}): TestLoggerResult {
   const {
     startTime = 1_700_000_000_000,

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Logger } from "../src/logger";
 import type { MockTime, TestTransport } from "../src/testing";
 import { createMockError, createTestLogger } from "../src/testing";
@@ -12,6 +12,11 @@ describe("Logger", () => {
 
   beforeEach(() => {
     ({ logger, transport } = createTestLogger());
+  });
+
+  afterEach(() => {
+    transport.clear();
+    transport.reset();
   });
 
   describe("basic logging", () => {

@@ -87,10 +87,10 @@ jobs:
         run: bun run lint
 
       - name: Check types
-        run: bun run check:types
+        run: bun run typecheck
 
       - name: Run tests
-        run: bun run test run
+        run: bun run test
 
       - name: Build library
         run: bun run build

@@ -1,7 +1,7 @@
 {
   "name": "cenglu",
   "description": "Fast, zero-dependencies, secure logger for Node.js that doesn't suck. Built for production, not resumes.",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "type": "module",
   "license": "MIT",
   "author": "Wahyu Kurniawan <ayungavis@gmail.com>",
@@ -58,31 +58,6 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "typesVersions": {
-    "*": {
-      "context": [
-        "./dist/context.d.ts"
-      ],
-      "testing": [
-        "./dist/testing.d.ts"
-      ],
-      "middleware": [
-        "./dist/middleware.d.ts"
-      ],
-      "plugins": [
-        "./dist/plugins/index.d.ts"
-      ],
-      "transports": [
-        "./dist/transports/index.d.ts"
-      ],
-      "format": [
-        "./dist/format.d.ts"
-      ],
-      "redaction": [
-        "./dist/redaction.d.ts"
-      ]
-    }
-  },
   "sideEffects": false,
   "files": [
     "dist",
@@ -108,17 +83,14 @@
     "@biomejs/biome": "2.3.8",
     "@size-limit/preset-small-lib": "^11.2.0",
     "@types/node": "^20.14.9",
-    "@vitest/coverage-v8": "^4.0.8",
+    "@vitest/coverage-v8": "^4.0.15",
     "bunup": "^0.16.10",
     "lefthook": "^2.0.4",
     "size-limit": "^11.2.0",
     "typedoc": "^0.25.13",
     "typescript": "^5.5.4",
     "ultracite": "6.3.8",
-    "vitest": "^2.0.5"
-  },
-  "optionalDependencies": {
-    "zlib": "^1.0.5"
+    "vitest": "^4.0.15"
   },
   "size-limit": [
     {
