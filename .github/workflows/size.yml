@@ -8,97 +8,144 @@ jobs:
   size:
     name: Check Package Size
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-      
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      
+
       - name: Build library
         run: bun run build
-      
+
       - name: Calculate package size
         id: size
         run: |
-          # Get the size of dist directory
-          DIST_SIZE=$(du -sb dist | cut -f1)
-          DIST_SIZE_KB=$(echo "scale=2; $DIST_SIZE / 1024" | bc)
-          
-          echo "dist_size=$DIST_SIZE" >> $GITHUB_OUTPUT
-          echo "dist_size_kb=$DIST_SIZE_KB" >> $GITHUB_OUTPUT
-          
-          # Pack the package to check the actual npm package size
-          npm pack --dry-run 2>&1 | grep "package size" | awk '{print $NF}' > package_size.txt
-          PACKAGE_SIZE=$(cat package_size.txt)
-          
-          echo "package_size=$PACKAGE_SIZE" >> $GITHUB_OUTPUT
-          
-          echo "📦 Build Output Size: ${DIST_SIZE_KB} KB"
-          echo "📦 NPM Package Size: ${PACKAGE_SIZE}"
-      
+          set -euo pipefail
+
+          # Ensure dist exists
+          if [ ! -d dist ]; then
+            echo "dist directory not found. Make sure the build produced dist/."
+            exit 1
+          fi
+
+          # Get size of dist directory in bytes and KB (integer KB)
+          DIST_BYTES=$(du -sb dist | cut -f1)
+          DIST_KB=$(( (DIST_BYTES + 1023) / 1024 ))
+
+          echo "dist_size=$DIST_BYTES" >> $GITHUB_OUTPUT
+          echo "dist_size_kb=$DIST_KB" >> $GITHUB_OUTPUT
+
+          # Get npm package size via JSON output for robustness
+          # npm pack --dry-run --json outputs an array with .size (bytes)
+          PACKAGE_SIZE_BYTES=$(npm pack --dry-run --json 2>/dev/null | node -e "
+            const fs = require('fs');
+            const s = fs.readFileSync(0,'utf8').trim();
+            if (!s) { process.exit(0); }
+            let j;
+            try { j = JSON.parse(s); } catch (e) { process.exit(0); }
+            if (Array.isArray(j) && j[0] && typeof j[0].size === 'number') {
+              console.log(j[0].size);
+            }
+          ")
+          # Fallback when npm JSON parsing fails: attempt legacy grep/awk parsing
+          if [ -z \"$PACKAGE_SIZE_BYTES\" ]; then
+            PACKAGE_SIZE_BYTES=$(npm pack --dry-run 2>&1 | grep -i 'package size' | awk '{print $NF}' | tr -d '[:alpha:][:space:](),')
+          fi
+
+          PACKAGE_SIZE_BYTES=${PACKAGE_SIZE_BYTES:-0}
+          PACKAGE_SIZE_KB=$(( (PACKAGE_SIZE_BYTES + 1023) / 1024 ))
+
+          echo "package_size=$PACKAGE_SIZE_BYTES" >> $GITHUB_OUTPUT
+          echo "package_size_kb=$PACKAGE_SIZE_KB" >> $GITHUB_OUTPUT
+
+          echo "📦 Build Output Size: ${DIST_KB} KB (${DIST_BYTES} bytes)"
+          echo "📦 NPM Package Size: ${PACKAGE_SIZE_KB} KB (${PACKAGE_SIZE_BYTES} bytes)"
+
       - name: Check size limits
         run: |
+          set -euo pipefail
+
           # Define size limits (in bytes)
-          MAX_DIST_SIZE=512000  # 500 KB for dist folder
-          MAX_PACKAGE_SIZE=256000  # 250 KB for npm package
-          
-          DIST_SIZE=${{ steps.size.outputs.dist_size }}
-          
-          if [ "$DIST_SIZE" -gt "$MAX_DIST_SIZE" ]; then
-            echo "⚠️ Warning: Build output size exceeds limit!"
-            echo "Current: $(echo "scale=2; $DIST_SIZE / 1024" | bc) KB"
-            echo "Limit: $(echo "scale=2; $MAX_DIST_SIZE / 1024" | bc) KB"
+          MAX_DIST_BYTES=512000    # 500 KB
+          MAX_PACKAGE_BYTES=256000 # 250 KB
+
+          DIST_BYTES=${{ steps.size.outputs.dist_size }}
+          PACKAGE_BYTES=${{ steps.size.outputs.package_size }}
+
+          echo "Limits: dist <= $MAX_DIST_BYTES bytes, package <= $MAX_PACKAGE_BYTES bytes"
+          echo "Measured: dist = ${DIST_BYTES} bytes, package = ${PACKAGE_BYTES} bytes"
+
+          FAIL_ON_EXCEED=true  # set to false if you want only warnings
+
+          exceeded=false
+          if [ "$DIST_BYTES" -gt "$MAX_DIST_BYTES" ]; then
+            echo "⚠️ Build output size exceeds limit!"
+            echo "Current: $(echo "scale=2; $DIST_BYTES/1024" | bc) KB"
+            exceeded=true
           else
-            echo "✅ Build output size is within limits"
+            echo "✅ Build output size is within limit"
           fi
-      
+
+          if [ -n "$PACKAGE_BYTES" ] && [ "$PACKAGE_BYTES" -gt "$MAX_PACKAGE_BYTES" ]; then
+            echo "⚠️ NPM package size exceeds limit!"
+            echo "Current: $(echo "scale=2; $PACKAGE_BYTES/1024" | bc) KB"
+            exceeded=true
+          else
+            echo "✅ NPM package size is within limit"
+          fi
+
+          if [ "$exceeded" = true ] && [ "$FAIL_ON_EXCEED" = true ]; then
+            echo "One or more size limits exceeded. Failing the job."
+            exit 1
+          fi
+
       - name: Comment PR with size information
         uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
         with:
           script: |
             const distSize = '${{ steps.size.outputs.dist_size_kb }}';
-            const packageSize = '${{ steps.size.outputs.package_size }}';
-            
+            const packageSize = '${{ steps.size.outputs.package_size_kb }}';
+
             const comment = `## 📊 Package Size Report
-            
+
             | Metric | Size |
             |--------|------|
             | Build Output | ${distSize} KB |
-            | NPM Package | ${packageSize} |
-            
+            | NPM Package | ${packageSize} KB |
+
             <details>
             <summary>Size Limits</summary>
-            
+
             - ⚠️ Build output should be < 500 KB
             - ⚠️ NPM package should be < 250 KB
-            
+
             </details>`;
-            
+
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
-            
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
               comment.body.includes('Package Size Report')
             );
-            
+
             if (botComment) {
               // Update existing comment
               await github.rest.issues.updateComment({

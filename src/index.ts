@@ -1,70 +1,167 @@
-// biome-ignore assist/source/organizeImports: <sort issue>
+/**
+ * cenglu - Fast, zero-dependency, secure logger for Node.js
+ *
+ * @example
+ * // Basic usage
+ * import { createLogger } from "cenglu";
+ *
+ * const logger = createLogger({
+ *   service: "my-app",
+ *   level: "info",
+ * });
+ *
+ * logger.info("Application started", { port: 3000 });
+ * logger.error("Failed to connect", new Error("Connection refused"));
+ *
+ * @example
+ * // With child loggers
+ * const requestLogger = logger.child({ requestId: "abc-123" });
+ * requestLogger.info("Processing request");
+ *
+ * @example
+ * // With plugins
+ * import { createLogger, samplingPlugin, rateLimitPlugin } from "cenglu";
+ *
+ * const logger = createLogger({
+ *   plugins: [
+ *     samplingPlugin({ defaultRate: 0.1 }),
+ *     rateLimitPlugin({ maxLogs: 1000, windowMs: 1000 }),
+ *   ],
+ * });
+ *
+ * @packageDocumentation
+ */
+
+// Core
+// biome-ignore lint/performance/noBarrelFile: organized exports
 export {
-  datadogLine,
-  datadogObject,
-  ecsLine,
-  ecsObject,
-  jsonLine,
-  prettyLine,
-  splunkLine,
-  splunkObject,
-} from "./format";
-
-// OpenTelemetry Integration
-export {
-  configureLoggerWithOtel,
-  createOpenTelemetryAdapter,
-  createOtelTraceProvider,
-  OpenTelemetryAdapter,
-  otelExpressMiddleware,
-  OtelHelpers,
-  type OpenTelemetryOptions,
-} from "./integrations/opentelemetry";
-
-export { createLogger, Logger } from "./logger";
-
-// Middleware
+  DEFAULT_PATTERNS,
+  DEFAULT_SENSITIVE_PATHS,
+  DEFAULT_THEME,
+  LEVEL_COLORS,
+  LEVEL_VALUES,
+  LEVELS,
+  NO_COLOR_THEME,
+} from "./constants";
+export type {
+  CorrelationIdOptions,
+  CorrelationIdStrategy,
+  LogContext,
+  RequestContextOptions,
+} from "./context";
 export {
   createCorrelationIdGenerator,
-  expressMiddleware,
-  fastifyPlugin,
-  koaMiddleware,
-} from "./middleware";
-
+  createRequestContext,
+  LoggerContext,
+  withBindings,
+  withContext,
+} from "./context";
+// Format
+export {
+  formatDatadog,
+  formatEcs,
+  formatISOTimestamp,
+  formatJson,
+  formatLogfmt,
+  formatPretty,
+  formatSplunk,
+  formatTimestamp,
+  getFormatter,
+  renderTree,
+  toDatadogObject,
+  toEcsObject,
+  toSplunkObject,
+} from "./format";
+// Default export
+export {
+  type BoundLogger,
+  createLogger,
+  Logger,
+  Logger as default,
+} from "./logger";
+export * from "./middleware";
+// Plugins
+export type { BatchingPluginOptions } from "./plugins/batching";
+export {
+  batchingPlugin,
+  httpBatchingPlugin,
+} from "./plugins/batching";
+export type { EnrichPluginOptions } from "./plugins/enrich";
+export {
+  enrichPlugin,
+  errorFingerprintPlugin,
+  requestEnrichPlugin,
+} from "./plugins/enrich";
+export type { FilterPluginOptions } from "./plugins/filter";
+export {
+  filterPlugin,
+  timeWindowFilterPlugin,
+} from "./plugins/filter";
+export type {
+  MetricsCollector,
+  MetricsPluginOptions,
+} from "./plugins/metrics";
+export {
+  createConsoleMetricsCollector,
+  createNoOpMetricsCollector,
+  metricsPlugin,
+} from "./plugins/metrics";
+export type { RateLimitPluginOptions } from "./plugins/rate-limit";
+export {
+  rateLimitPlugin,
+  tokenBucketPlugin,
+} from "./plugins/rate-limit";
+export type { RedactionPluginOptions } from "./plugins/redaction";
+export {
+  redactionPlugin,
+  strictRedactionPlugin,
+} from "./plugins/redaction";
+export type { SamplingPluginOptions } from "./plugins/sampling";
+export {
+  deterministicSamplingPlugin,
+  samplingPlugin,
+} from "./plugins/sampling";
 // Redaction
 export {
+  createGDPRRedactor,
+  createHIPAARedactor,
+  createMinimalRedactor,
+  createPattern,
+  createPCIRedactor,
   createRedactor,
+  mergeRedactionOptions,
   Redactor,
-  redactSensitive,
+  redact,
+  redactString,
 } from "./redaction";
-
-// Runtime Configuration
-export {
-  createConfigurableLogger,
-  getRuntimeConfig,
-  initializeRuntimeConfig,
-  LogLevelCLI,
-  RuntimeConfig,
-  type RuntimeConfigOptions,
-} from "./runtime-config";
-export {
-  BufferedTransport,
-  createBufferedTransport,
-} from "./transports/buffered";
-
 // Transports
-export { ConsoleTransport } from "./transports/console";
-export { FileTransport } from "./transports/file";
-export { createHttpTransport, HttpTransport } from "./transports/http";
-
-// Types
+export type {
+  BufferedConsoleOptions,
+  PrettyConsoleOptions,
+} from "./transports/console";
+export {
+  BufferedConsoleTransport,
+  ConsoleTransport,
+  createBufferedConsoleTransport,
+  createConsoleTransport,
+  PrettyConsoleTransport,
+} from "./transports/console";
+export type { RotatingFileOptions } from "./transports/file";
+export {
+  createFileTransport,
+  createRotatingFileTransport,
+  FileTransport,
+} from "./transports/file";
+// Utils and types
 export type {
   AsyncTransport,
   Bindings,
-  ConsoleSinkOptions,
+  ConsoleOptions,
+  ErrorInfo,
+  FileOptions,
   FileRotationPolicy,
-  FileSinkOptions,
   LoggerOptions,
+  LoggerPlugin,
   LogLevel,
   LogRecord,
   PrettyOptions,
@@ -72,8 +169,10 @@ export type {
   RedactionOptions,
   RedactionPattern,
   SamplingOptions,
-  StructuredOptions,
+  StructuredFormat,
   Theme,
+  TimerResult,
+  TraceContext,
   Transport,
-  TransportOptions,
 } from "./types";
+export { isValidLevel } from "./utils";

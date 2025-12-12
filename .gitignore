@@ -1,7 +1,37 @@
-# build & dependencies
-dist
-node_modules
+# Dependencies
+node_modules/
 
-# docs
-*.md
-!README.md
+# Build output
+dist/
+*.tsbuildinfo
+
+# Coverage
+coverage/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test
+.vitest/
+
+# Package manager
+.pnpm-store/
+.yarn/
+
+# Misc
+*.tgz
+.npmrc

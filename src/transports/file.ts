@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import {
   createReadStream,
   createWriteStream,
@@ -9,255 +8,538 @@ import {
   unlinkSync,
   type WriteStream,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
-import type { FileSinkOptions, LogLevel, LogRecord, Transport } from "../types";
+import type { FileOptions, FileRotationPolicy, LogLevel, LogRecord, Transport } from "../types";
 
-interface StreamHandle {
-  level: LogLevel;
-  stream: WriteStream;
-  periodIndex: number;
-  sequence: number;
-  bytes: number;
-}
-
-const dayMs = 24 * 60 * 60 * 1000;
-const floorToDays = (t: number, days: number) =>
-  Math.floor(t / (Math.max(1, days) * dayMs));
-const ensureDir = (d: string) => {
-  if (!existsSync(d)) mkdirSync(d, { recursive: true });
+type FileTransportConfig = {
+  enabled: boolean;
+  dir: string;
+  separateErrors: boolean;
+  filename: (info: { date: Date; level: LogLevel; sequence: number }) => string;
+  rotation: Required<FileRotationPolicy>;
 };
 
-export class FileTransport implements Transport {
-  private opts: Required<FileSinkOptions>;
-  private info?: StreamHandle;
-  private err?: StreamHandle;
-  private now: () => number;
-  private lastCleanupDay = -1;
+type StreamState = {
+  stream: WriteStream;
+  path: string;
+  bytes: number;
+  dayIndex: number;
+  sequence: number;
+  writable: boolean;
+};
 
-  constructor(opts: FileSinkOptions = {}, now?: () => number) {
-    const rotation = {
-      intervalDays: 1,
-      maxBytes: 10 * 1024 * 1024,
-      maxFilesPerPeriod: 10,
-      gzip: false,
-      compress: undefined,
-      compressedTtlDays: 0,
-      ...(opts.rotation || {}),
+const DAY_MS = 86_400_000; // 24 * 60 * 60 * 1000
+const DEFAULT_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_MAX_FILES = 10;
+const DEFAULT_INTERVAL_DAYS = 1;
+
+/**
+ * Transport that writes logs to files with rotation support
+ *
+ * Features:
+ * - Automatic file rotation by size and time
+ * - Optional gzip compression of rotated files
+ * - Separate error log files
+ * - Retention policy for old files
+ * - Graceful handling of disk errors
+ *
+ * @example
+ * const transport = new FileTransport({
+ *   dir: "./logs",
+ *   separateErrors: true,
+ *   rotation: {
+ *     maxBytes: 10 * 1024 * 1024, // 10 MB
+ *     intervalDays: 1,
+ *     maxFiles: 10,
+ *     compress: "gzip",
+ *     retentionDays: 30,
+ *   },
+ * });
+ */
+export class FileTransport implements Transport {
+  private readonly config: FileTransportConfig;
+  private readonly now: () => number;
+
+  private infoStream: StreamState | null = null;
+  private errorStream: StreamState | null = null;
+  private lastCleanupDay = -1;
+  private closed = false;
+  private pendingWrites = 0;
+
+  constructor(options: FileOptions = {}, now?: () => number) {
+    this.now = now ?? Date.now;
+
+    this.config = {
+      enabled: options.enabled ?? true,
+      dir: options.dir ?? process.env.LOG_DIR ?? "./logs",
+      separateErrors: options.separateErrors ?? true,
+      filename: options.filename ?? this.defaultFilename,
+      rotation: {
+        intervalDays: options.rotation?.intervalDays ?? DEFAULT_INTERVAL_DAYS,
+        maxBytes: options.rotation?.maxBytes ?? DEFAULT_MAX_BYTES,
+        maxFiles: options.rotation?.maxFiles ?? DEFAULT_MAX_FILES,
+        compress: options.rotation?.compress ?? false,
+        retentionDays: options.rotation?.retentionDays ?? 0,
+      },
     };
 
-    if (rotation.gzip && !rotation.compress) rotation.compress = "gzip";
-
-    this.opts = {
-      enabled: true,
-      dir: process.env.LOG_DIR || "./logs",
-      separateError: true,
-      filename: ({ date, level, sequence }) => {
-        const yyyy = date.getFullYear(),
-          mm = String(date.getMonth() + 1).padStart(2, "0"),
-          dd = String(date.getDate()).padStart(2, "0");
-        const seq = sequence > 0 ? `.${String(sequence).padStart(3, "0")}` : "";
-        return `${level}-${yyyy}-${mm}-${dd}${seq}.log`;
-      },
-      ...opts,
-      rotation,
-    } as Required<FileSinkOptions>;
-
-    this.now = now || (() => Date.now());
-    ensureDir(this.opts.dir);
+    // Ensure log directory exists
+    this.ensureDirectory(this.config.dir);
   }
 
-  private dateFor(idx: number) {
-    return new Date((this.opts.rotation.intervalDays || 1) * dayMs * idx);
-  }
-
-  private filePath(level: LogLevel, sequence: number, idx: number) {
-    const date = this.dateFor(idx);
-    const name = this.opts.filename({
-      date,
-      level,
-      periodIndex: idx,
-      sequence,
-    });
-
-    return join(this.opts.dir, name);
-  }
-
-  private open(level: LogLevel, sequence: number, idx: number): StreamHandle {
-    const full = this.filePath(level, sequence, idx);
-
-    ensureDir(this.opts.dir);
-
-    const s = createWriteStream(full, { flags: "a" });
-    let bytes = 0;
+  write(_record: LogRecord, formatted: string, isError: boolean): void {
+    if (!this.config.enabled || this.closed) {
+      return;
+    }
 
     try {
-      bytes = statSync(full).size;
-    } catch {}
+      const level = isError ? "error" : "info";
+      const state = this.getOrCreateStream(level, isError);
 
-    return { level, stream: s, periodIndex: idx, sequence, bytes };
-  }
+      // biome-ignore lint/complexity/useOptionalChain: intentional
+      if (!(state && state.writable)) {
+        return;
+      }
 
-  private cleanupCompressedFiles(nowMs: number) {
-    const ttl = this.opts.rotation.compressedTtlDays || 0;
+      // biome-ignore lint/style/useTemplate: intentional
+      const line = formatted + "\n";
+      const lineBytes = Buffer.byteLength(line, "utf8");
 
-    if (ttl <= 0) return;
-    const ttlMs = ttl * dayMs;
+      // Check if rotation is needed before writing
+      if (this.needsRotation(state, lineBytes)) {
+        this.rotateStream(state, level);
+      }
 
-    for (const f of readdirSync(this.opts.dir).filter(
-      (f) => f.endsWith(".gz") || f.endsWith(".lz4"),
-    )) {
-      try {
-        const p = join(this.opts.dir, f);
-        const st = statSync(p);
-        if (nowMs - st.mtimeMs > ttlMs) unlinkSync(p);
-      } catch {}
-    }
-  }
-
-  private getHandle(level: LogLevel) {
-    const t = this.now();
-    const idx = floorToDays(t, this.opts.rotation.intervalDays || 1);
-    const today = floorToDays(t, 1);
-
-    if (today !== this.lastCleanupDay) {
-      this.cleanupCompressedFiles(t);
-      this.lastCleanupDay = today;
-    }
-
-    const target =
-      this.opts.separateError && (level === "error" || level === "fatal")
-        ? "err"
-        : "info";
-    let h = this[target] as StreamHandle | undefined;
-
-    if (!h || h.periodIndex !== idx) {
-      if (h) h.stream.close();
-      h = this.open(target === "err" ? "error" : "info", 0, idx);
-      this[target] = h;
-    }
-
-    return h;
-  }
-
-  private compressGzip(path: string) {
-    const gz = createGzip();
-    const out = createWriteStream(`${path}.gz`);
-
-    return new Promise<void>((resolve) => {
-      createReadStream(path)
-        .pipe(gz)
-        .pipe(out)
-        .on("finish", () => {
-          try {
-            unlinkSync(path);
-          } catch {}
-          resolve();
-        })
-        .on("error", () => resolve());
-    });
-  }
-
-  private async compressLz4(path: string) {
-    try {
-      await new Promise<void>((res) => {
-        const cp = spawn("lz4", ["-z", "-f", path, `${path}.lz4`], {
-          stdio: "ignore",
-        });
-
-        cp.on("close", () => {
-          try {
-            unlinkSync(path);
-          } catch {}
-          res();
-        });
-
-        cp.on("error", () => res());
+      // Write to stream
+      this.pendingWrites += 1;
+      const written = state.stream.write(line, () => {
+        this.pendingWrites -= 1;
       });
-    } catch {}
+
+      state.bytes += lineBytes;
+
+      // Handle backpressure
+      if (!written) {
+        state.stream.once("drain", () => {
+          // Ready for more writes
+        });
+      }
+    } catch (err) {
+      // Log file errors shouldn't crash the application
+      this.handleError(err);
+    }
   }
 
-  private async compressOld(path: string) {
-    const algo = (
-      this.opts.rotation.compress || this.opts.rotation.gzip ? "gzip" : false
-    ) as false | "gzip" | "lz4";
+  async flush(): Promise<void> {
+    const streams = [this.infoStream, this.errorStream].filter(Boolean) as StreamState[];
 
-    if (!algo) return;
-    if (algo === "lz4") await this.compressLz4(path);
-    else await this.compressGzip(path);
+    // Wait for pending writes to complete
+    if (this.pendingWrites > 0) {
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (this.pendingWrites === 0) {
+            resolve();
+          } else {
+            setImmediate(check);
+          }
+        };
+        check();
+      });
+    }
+
+    // Drain all streams
+    await Promise.all(streams.map((state) => this.drainStream(state.stream)));
   }
 
-  private enforceRetention(level: LogLevel, idx: number) {
-    const max = this.opts.rotation.maxFilesPerPeriod || 0;
+  async close(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
 
-    if (max <= 0) return;
+    // Flush pending writes
+    await this.flush();
 
-    const d = this.dateFor(idx);
-    const yyyy = d.getFullYear(),
-      mm = String(d.getMonth() + 1).padStart(2, "0"),
-      dd = String(d.getDate()).padStart(2, "0");
-    const prefix = `${level}-${yyyy}-${mm}-${dd}`;
-    const files = readdirSync(this.opts.dir)
-      .filter(
-        (f) =>
-          f.startsWith(prefix) &&
-          (f.endsWith(".log") ||
-            f.endsWith(".log.gz") ||
-            f.endsWith(".log.lz4")),
-      )
-      .sort();
+    // Close streams
+    const closePromises: Promise<void>[] = [];
 
-    if (files.length <= max) return;
+    if (this.infoStream) {
+      closePromises.push(this.closeStream(this.infoStream.stream));
+      this.infoStream = null;
+    }
 
-    const remove = files.slice(0, Math.max(0, files.length - max));
-    for (const f of remove) {
+    if (this.errorStream) {
+      closePromises.push(this.closeStream(this.errorStream.stream));
+      this.errorStream = null;
+    }
+
+    await Promise.all(closePromises);
+  }
+
+  private getOrCreateStream(_level: LogLevel, isError: boolean): StreamState | null {
+    const timestamp = this.now();
+    const dayIndex = this.getDayIndex(timestamp);
+
+    // Run cleanup once per day
+    const todayIndex = Math.floor(timestamp / DAY_MS);
+    if (todayIndex !== this.lastCleanupDay) {
+      this.runCleanup(timestamp);
+      this.lastCleanupDay = todayIndex;
+    }
+
+    // Determine which stream to use
+    const useErrorStream = this.config.separateErrors && isError;
+    const currentState = useErrorStream ? this.errorStream : this.infoStream;
+    const streamLevel = useErrorStream ? "error" : "info";
+
+    // Check if we need a new stream (new day or first write)
+    if (!currentState || currentState.dayIndex !== dayIndex) {
+      // Close old stream if it exists
+      if (currentState) {
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional
+        this.closeStream(currentState.stream).catch(() => {});
+      }
+
+      // Create new stream
+      const newState = this.createStream(streamLevel as LogLevel, dayIndex);
+
+      if (useErrorStream) {
+        this.errorStream = newState;
+      } else {
+        this.infoStream = newState;
+      }
+
+      return newState;
+    }
+
+    return currentState;
+  }
+
+  private createStream(level: LogLevel, dayIndex: number, sequence = 0): StreamState {
+    const date = this.getDateForDayIndex(dayIndex);
+    const filename = this.config.filename({ date, level, sequence });
+    const filepath = join(this.config.dir, filename);
+
+    // Ensure directory exists
+    this.ensureDirectory(dirname(filepath));
+
+    // Get current file size if file exists
+    let bytes = 0;
+    try {
+      if (existsSync(filepath)) {
+        bytes = statSync(filepath).size;
+      }
+    } catch {
+      // File doesn't exist or can't be read, start fresh
+    }
+
+    // Create write stream (append mode)
+    const stream = createWriteStream(filepath, {
+      flags: "a",
+      encoding: "utf8",
+    });
+
+    // Handle stream errors
+    stream.on("error", (err) => {
+      this.handleError(err);
+    });
+
+    const state: StreamState = {
+      stream,
+      path: filepath,
+      bytes,
+      dayIndex,
+      sequence,
+      writable: true,
+    };
+
+    // Track writable state
+    stream.on("close", () => {
+      state.writable = false;
+    });
+
+    stream.on("error", () => {
+      state.writable = false;
+    });
+
+    return state;
+  }
+
+  private needsRotation(state: StreamState, additionalBytes: number): boolean {
+    const maxBytes = this.config.rotation.maxBytes;
+    return maxBytes > 0 && state.bytes + additionalBytes > maxBytes;
+  }
+
+  private rotateStream(state: StreamState, level: LogLevel): void {
+    const oldPath = state.path;
+    const dayIndex = state.dayIndex;
+    const newSequence = state.sequence + 1;
+
+    // Close current stream
+    state.stream.end();
+    state.writable = false;
+
+    // Compress old file asynchronously
+    if (this.config.rotation.compress === "gzip") {
+      // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional
+      this.compressFile(oldPath).catch(() => {});
+    }
+
+    // Create new stream with incremented sequence
+    const newState = this.createStream(level as LogLevel, dayIndex, newSequence);
+
+    // Update reference
+    if (level === "error") {
+      this.errorStream = newState;
+    } else {
+      this.infoStream = newState;
+    }
+
+    // Enforce file count limits
+    this.enforceMaxFiles(level as LogLevel, dayIndex);
+  }
+
+  private async compressFile(filepath: string): Promise<void> {
+    if (!existsSync(filepath)) {
+      return;
+    }
+
+    const gzPath = `${filepath}.gz`;
+
+    try {
+      const source = createReadStream(filepath);
+      const destination = createWriteStream(gzPath);
+      const gzip = createGzip();
+
+      await pipeline(source, gzip, destination);
+
+      // Remove original file after successful compression
+      unlinkSync(filepath);
+    } catch (err) {
+      this.handleError(err);
+
+      // Clean up partial gz file if it exists
       try {
-        unlinkSync(join(this.opts.dir, f));
+        if (existsSync(gzPath)) {
+          unlinkSync(gzPath);
+        }
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional
       } catch {}
     }
   }
 
-  private rotateIfNeeded(h: StreamHandle, nextBytes: number) {
-    const max = this.opts.rotation.maxBytes || Infinity;
-
-    if (h.bytes + nextBytes > max) {
-      const old = this.filePath(h.level, h.sequence, h.periodIndex);
-
-      h.stream.close();
-
-      void this.compressOld(old).then(() =>
-        this.cleanupCompressedFiles(this.now()),
-      );
-
-      const nh = this.open(h.level, h.sequence + 1, h.periodIndex);
-      this.enforceRetention(h.level, h.periodIndex);
-
-      if (h.level === "error") this.err = nh;
-      else this.info = nh;
-
-      return nh;
+  private enforceMaxFiles(level: LogLevel, dayIndex: number): void {
+    const maxFiles = this.config.rotation.maxFiles;
+    if (maxFiles <= 0) {
+      return;
     }
 
-    return h;
+    try {
+      const date = this.getDateForDayIndex(dayIndex);
+      const prefix = this.getFilenamePrefix(level, date);
+
+      const files = readdirSync(this.config.dir)
+        .filter((f) => f.startsWith(prefix) && (f.endsWith(".log") || f.endsWith(".gz")))
+        .sort();
+
+      if (files.length > maxFiles) {
+        const toRemove = files.slice(0, files.length - maxFiles);
+        for (const file of toRemove) {
+          try {
+            unlinkSync(join(this.config.dir, file));
+            // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional
+          } catch {}
+        }
+      }
+    } catch (err) {
+      this.handleError(err);
+    }
   }
 
-  write(_rec: LogRecord, formatted: string, isError: boolean) {
-    if (!this.opts.enabled) return;
+  private runCleanup(timestamp: number): void {
+    const retentionDays = this.config.rotation.retentionDays;
+    if (retentionDays <= 0) {
+      return;
+    }
 
-    let h = this.getHandle(isError ? "error" : "info");
-    const line = `${formatted}\n`;
-    h = this.rotateIfNeeded(h, Buffer.byteLength(line));
-    const ok = h.stream.write(line);
-    h.bytes += Buffer.byteLength(line);
+    const cutoffTime = timestamp - retentionDays * DAY_MS;
 
-    if (!ok) h.stream.once("drain", () => {});
+    try {
+      const files = readdirSync(this.config.dir);
+
+      for (const file of files) {
+        if (!(file.endsWith(".log") || file.endsWith(".gz"))) {
+          continue;
+        }
+
+        const filepath = join(this.config.dir, file);
+
+        try {
+          const stat = statSync(filepath);
+          if (stat.mtimeMs < cutoffTime) {
+            unlinkSync(filepath);
+          }
+        } catch {
+          // File might have been deleted, ignore
+        }
+      }
+    } catch (err) {
+      this.handleError(err);
+    }
   }
 
-  async close() {
-    await Promise.all(
-      [this.info?.stream, this.err?.stream]
-        .filter(Boolean)
-        .map((s) => new Promise<void>((res) => s?.end(res))),
-    );
+  // biome-ignore lint/style/useReadonlyClassProperties: intentional
+  private defaultFilename = (info: { date: Date; level: LogLevel; sequence: number }): string => {
+    const year = info.date.getFullYear();
+    const month = String(info.date.getMonth() + 1).padStart(2, "0");
+    const day = String(info.date.getDate()).padStart(2, "0");
+
+    const seq = info.sequence > 0 ? `.${String(info.sequence).padStart(3, "0")}` : "";
+
+    return `${info.level}-${year}-${month}-${day}${seq}.log`;
+  };
+
+  private getFilenamePrefix(level: LogLevel, date: Date): string {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${level}-${year}-${month}-${day}`;
+  }
+
+  private getDayIndex(timestamp: number): number {
+    const intervalDays = this.config.rotation.intervalDays;
+    return Math.floor(timestamp / (intervalDays * DAY_MS));
+  }
+
+  private getDateForDayIndex(dayIndex: number): Date {
+    const intervalDays = this.config.rotation.intervalDays;
+    return new Date(dayIndex * intervalDays * DAY_MS);
+  }
+
+  private ensureDirectory(dir: string): void {
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+  }
+
+  private drainStream(stream: WriteStream): Promise<void> {
+    return new Promise((resolve) => {
+      if (stream.writableNeedDrain) {
+        stream.once("drain", () => resolve());
+      } else {
+        resolve();
+      }
+    });
+  }
+
+  private closeStream(stream: WriteStream): Promise<void> {
+    return new Promise((resolve) => {
+      stream.end(() => resolve());
+    });
+  }
+
+  private handleError(err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[cenglu:FileTransport] Error: ${message}\n`);
   }
 }
+
+export type RotatingFileOptions = {
+  path: string;
+  maxSize?: number | string;
+  maxFiles?: number;
+  compress?: boolean;
+  datePattern?: string;
+  rotateDatePattern?: boolean;
+};
+
+function parseSize(size: number | string): number {
+  if (typeof size === "number") {
+    return size;
+  }
+
+  // biome-ignore lint/performance/useTopLevelRegex: intentional
+  const match = size.match(/^(\d+(?:\.\d+)?)\s*([kmg])?b?$/i);
+  if (!match) {
+    return Number.parseInt(size, 10);
+  }
+
+  const value = Number.parseFloat(match[1] ?? "0");
+  const unit = (match[2] ?? "").toLowerCase();
+
+  switch (unit) {
+    case "k":
+      return value * 1024;
+    case "m":
+      return value * 1024 * 1024;
+    case "g":
+      return value * 1024 * 1024 * 1024;
+    default:
+      return value;
+  }
+}
+
+/**
+ * Create a rotating file transport with simpler configuration
+ *
+ * @example
+ * const transport = createRotatingFileTransport({
+ *   path: "./logs/app-%DATE%.log",
+ *   maxSize: "10m",
+ *   maxFiles: 14,
+ *   compress: true,
+ * });
+ */
+export function createRotatingFileTransport(options: RotatingFileOptions): FileTransport {
+  const dir = dirname(options.path);
+  const filenamePattern = basename(options.path);
+
+  // Parse maxSize
+  const maxBytes = options.maxSize ? parseSize(options.maxSize) : DEFAULT_MAX_BYTES;
+
+  return new FileTransport({
+    enabled: true,
+    dir,
+    separateErrors: false,
+    filename: ({ date, sequence }) => {
+      // Replace date placeholder
+      let name = filenamePattern;
+
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+
+      name = name.replace(/%DATE%/g, `${year}-${month}-${day}`);
+      name = name.replace(/%YEAR%/g, String(year));
+      name = name.replace(/%MONTH%/g, month);
+      name = name.replace(/%DAY%/g, day);
+
+      // Add sequence number if needed
+      if (sequence > 0) {
+        const ext = name.lastIndexOf(".");
+        if (ext > 0) {
+          name = `${name.slice(0, ext)}.${sequence}${name.slice(ext)}`;
+        } else {
+          name = `${name}.${sequence}`;
+        }
+      }
+
+      return name;
+    },
+    rotation: {
+      intervalDays: 1,
+      maxBytes,
+      maxFiles: options.maxFiles ?? DEFAULT_MAX_FILES,
+      compress: options.compress ? "gzip" : false,
+    },
+  });
+}
+
+export function createFileTransport(options?: FileOptions, now?: () => number): FileTransport {
+  return new FileTransport(options, now);
+}
+
+export { FileTransport as default };
