@@ -1,6 +1,6 @@
 import { createLogger, expressErrorMiddleware, expressMiddleware } from "cenglu";
 import express from "express";
-import { randomInt } from "node:crypto";
+import { randomInt } from "crypto";
 
 // Create logger
 const logger = createLogger({

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "crypto";
 import { createRequestContext, LoggerContext } from "../context";
 import type { Logger } from "../logger";
 import type { Bindings } from "../types";

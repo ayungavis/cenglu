@@ -1,5 +1,5 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import crypto from "node:crypto";
+import { AsyncLocalStorage } from "async_hooks";
+import crypto from "crypto";
 import type { Bindings } from "./types";
 
 export type LogContext = {

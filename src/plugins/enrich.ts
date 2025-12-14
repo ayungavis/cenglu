@@ -61,7 +61,7 @@ export function enrichPlugin(options: EnrichPluginOptions = {}): LoggerPlugin {
     }
 
     try {
-      const os = require("node:os");
+      const os = require("os");
       cachedHostname = os.hostname();
       return cachedHostname;
     } catch {

@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomUUID } from "crypto";
+import type { IncomingMessage, ServerResponse } from "http";
 import { createRequestContext, LoggerContext } from "../context";
 import type { Logger } from "../logger";
 

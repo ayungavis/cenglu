@@ -7,10 +7,10 @@ import {
   statSync,
   unlinkSync,
   type WriteStream,
-} from "node:fs";
-import { basename, dirname, join } from "node:path";
-import { pipeline } from "node:stream/promises";
-import { createGzip } from "node:zlib";
+} from "fs";
+import { basename, dirname, join } from "path";
+import { pipeline } from "stream/promises";
+import { createGzip } from "zlib";
 import type { FileOptions, FileRotationPolicy, LogLevel, LogRecord, Transport } from "../types";
 
 type FileTransportConfig = {
