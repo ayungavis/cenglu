@@ -33,13 +33,7 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
 
-    "types": ["node"],
-
-    "baseUrl": ".",
-    "paths": {
-      "cenglu": ["./src/index.ts"],
-      "cenglu/*": ["./src/*"]
-    }
+    "types": ["node"]
   },
   "include": ["src/**/*", "src/testing/vitest.d.ts"],
   "exclude": [
