@@ -15,7 +15,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "express": "^5.2.1",
-    "cenglu": "file:../.."
+    "cenglu": "link:cenglu",
+    "express": "^5.2.1"
   }
 }
