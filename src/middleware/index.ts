@@ -29,3 +29,4 @@ export * from "./express";
 export * from "./fastify";
 export * from "./http";
 export * from "./koa";
+export * from "./nestjs";
