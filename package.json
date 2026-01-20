@@ -1,7 +1,7 @@
 {
   "name": "cenglu",
   "description": "Fast, zero-dependencies, secure logger for Node.js that doesn't suck. Built for production, not resumes.",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "type": "module",
   "license": "MIT",
   "author": "Wahyu Kurniawan <ayungavis@gmail.com>",
