@@ -124,7 +124,7 @@ app.post("/payment", (req, res) => {
 
 We've added a runnable example that demonstrates how to wire a batching plugin to send logs to an HTTP endpoint and how to enrich records with process/host metadata.
 
-File: `logger/examples/plugin-example.ts`
+File: `examples/plugin-example.ts`
 
 What it does
 - Starts a tiny local HTTP receiver that prints received batches.
@@ -135,11 +135,11 @@ What it does
 Run the example (quick):
 ```bash
 # Run directly with ts-node (recommended for quick demo)
-npx ts-node logger/examples/plugin-example.ts
+npx ts-node examples/plugin-example.ts
 
 # Or compile and run
-npx tsc logger/examples/plugin-example.ts --esModuleInterop --module es2022 --target es2022
-node logger/examples/plugin-example.js
+npx tsc examples/plugin-example.ts --esModuleInterop --module es2022 --target es2022
+node examples/plugin-example.js
 ```
 
 Why this example is useful

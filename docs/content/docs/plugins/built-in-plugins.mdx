@@ -515,13 +515,41 @@ const logger = createLogger({
   plugins: [
     metricsPlugin({
       collector: createConsoleMetricsCollector(),
-      reportInterval: 60000, // Report every minute
+      flushInterval: 60000, // Flush every minute
+      prefix: "myapp.logs",
+      tags: { service: "api", env: "production" },
       trackLevels: true,
-      trackErrors: true,
-      trackDuration: true,
+      trackErrorTypes: true,
     }),
   ],
 });
+```
+
+### Options
+
+```typescript
+type MetricsPluginOptions = {
+  // Metrics collector implementation (required)
+  collector: MetricsCollector;
+
+  // Metric name prefix
+  prefix?: string; // Default: "logs"
+
+  // Global tags to add to all metrics
+  tags?: Record<string, string>; // Default: {}
+
+  // Track per-level log counts
+  trackLevels?: boolean; // Default: true
+
+  // Track error counts by error type/name
+  trackErrorTypes?: boolean; // Default: true
+
+  // Flush interval in milliseconds
+  flushInterval?: number; // Default: 10000
+
+  // Custom metric name function
+  metricName?: (base: string, record: LogRecord) => string;
+};
 ```
 
 ### Custom Metrics Collector
@@ -543,7 +571,9 @@ const datadogCollector: MetricsCollector = {
 
 metricsPlugin({
   collector: datadogCollector,
-  reportInterval: 10000,
+  flushInterval: 10000,
+  prefix: "myapp.logs",
+  tags: { service: "api" },
 })
 ```
 
@@ -560,8 +590,12 @@ const logger = createLogger({
     redactionPlugin({ enabled: true, order: 15 }),
     enrichPlugin({ addProcessInfo: true, order: 20 }),
     filterPlugin({ minLevel: "info", order: 25 }),
-    batchingPlugin({ batchSize: 100, order: 30 }),
-    metricsPlugin({ reportInterval: 60000, order: 100 }),
+    batchingPlugin({ maxBatchSize: 100, onBatch: sendLogs, order: 30 }),
+    metricsPlugin({
+      collector: createConsoleMetricsCollector(),
+      flushInterval: 60000,
+      order: 100
+    }),
   ],
 });
 ```

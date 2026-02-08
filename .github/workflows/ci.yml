@@ -44,7 +44,7 @@ jobs:
       - name: Run tests
         run: bun run test
 
-      - name: Build library
+      - name: Build library and docs
         run: |
           bun run build
           cd docs
