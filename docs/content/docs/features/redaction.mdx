@@ -419,14 +419,6 @@ Redaction has minimal performance impact when designed properly:
 3. Keep pattern count reasonable (< 20)
 4. Use specific patterns (avoid `.*`)
 
-**Benchmarks:**
-```
-No redaction:           0.003ms per log
-Path redaction:         0.004ms per log (+33%)
-Pattern redaction (5):  0.006ms per log (+100%)
-Pattern redaction (20): 0.012ms per log (+300%)
-```
-
 ## Testing Redaction
 
 Verify redaction works correctly:

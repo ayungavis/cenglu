@@ -495,17 +495,6 @@ const done = logger.time("test");
 done(); // Logs duration
 ```
 
-## Performance Comparison
-
-Benchmark (100,000 logs):
-
-```
-Winston: ~2.10 seconds (47,619 ops/sec)
-Cenglu:  ~0.45 seconds (222,222 ops/sec)
-```
-
-Cenglu is **4.7x faster** than Winston.
-
 ## Common Pitfalls
 
 ### 1. Format Combiners

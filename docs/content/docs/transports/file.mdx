@@ -411,25 +411,6 @@ maxSize: "1gb"        // 1 gigabyte
 
 ## Performance
 
-### Benchmarks
-
-```
-File Transport (no rotation)
-├─ Throughput: ~40,000 logs/sec
-├─ Overhead: ~0.025ms per log
-└─ Disk I/O: ~4 MB/sec
-
-File Transport (with rotation)
-├─ Throughput: ~35,000 logs/sec
-├─ Overhead: ~0.029ms per log
-└─ Disk I/O: ~3.5 MB/sec
-
-File Transport (with compression)
-├─ Throughput: ~35,000 logs/sec (same, async compression)
-├─ Overhead: ~0.029ms per log
-└─ Disk I/O: ~400 KB/sec (10:1 compression)
-```
-
 ### Best Practices
 
 1. **Use rotation**: Prevent files from growing too large

@@ -222,25 +222,6 @@ In high-throughput scenarios, the OS write buffer can fill up. The transport mon
 
 ## Performance
 
-### Benchmarks
-
-```
-ConsoleTransport (unbuffered)
-├─ Throughput: ~50,000 logs/sec
-├─ Overhead: ~0.020ms per log
-└─ Memory: Minimal
-
-BufferedConsoleTransport (100 log buffer)
-├─ Throughput: ~100,000 logs/sec
-├─ Overhead: ~0.010ms per log
-└─ Memory: ~10KB buffer
-
-PrettyConsoleTransport
-├─ Throughput: ~30,000 logs/sec
-├─ Overhead: ~0.033ms per log
-└─ Memory: Minimal
-```
-
 ### Best Practices
 
 1. **Production**: Use `ConsoleTransport` with JSON formatting

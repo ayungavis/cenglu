@@ -583,17 +583,6 @@ console.log(logfmtLog);  // Logfmt string
 
 ## Performance
 
-### Benchmarks
-
-```
-JSON formatting:     ~0.015ms per log
-ECS formatting:      ~0.018ms per log
-Datadog formatting:  ~0.017ms per log
-Splunk formatting:   ~0.019ms per log
-Logfmt formatting:   ~0.012ms per log (fastest)
-Pretty formatting:   ~0.035ms per log (slowest)
-```
-
 ### Best Practices
 
 1. **Production**: Use JSON, ECS, or Datadog (platform-specific)

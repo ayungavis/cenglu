@@ -7,17 +7,6 @@ description: Complete guide to migrating from Pino to cenglu
 
 This guide helps you migrate from Pino to cenglu with minimal code changes.
 
-## Quick Comparison
-
-| Feature | Pino | Cenglu |
-|---------|------|--------|
-| Dependencies | Multiple | Zero |
-| Bundle Size | ~100KB | < 500KB |
-| Built-in Redaction | ❌ | ✅ |
-| AsyncLocalStorage | ❌ | ✅ |
-| Middleware | Limited | Express, NestJS, Fastify, Koa |
-| Type Safety | ⚠️ | ✅ Full |
-
 ## Basic Migration
 
 ### Creating a Logger
@@ -404,22 +393,6 @@ const logger = createLogger({
   },
 });
 ```
-
-## Performance Comparison
-
-Migration performance impact:
-
-```typescript
-// Benchmark (100,000 logs)
-// Pino: ~0.38 seconds (263,158 ops/sec)
-// Cenglu: ~0.45 seconds (222,222 ops/sec)
-```
-
-Cenglu is ~15% slower than Pino in pure logging speed, but includes:
-- Built-in redaction
-- Better TypeScript support
-- Zero dependencies
-- More middleware options
 
 ## Common Pitfalls
 
