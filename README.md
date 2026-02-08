@@ -120,6 +120,34 @@ app.post("/payment", (req, res) => {
 });
 ```
 
+### Plugin example — batching + HTTP sink
+
+We've added a runnable example that demonstrates how to wire a batching plugin to send logs to an HTTP endpoint and how to enrich records with process/host metadata.
+
+File: `logger/examples/plugin-example.ts`
+
+What it does
+- Starts a tiny local HTTP receiver that prints received batches.
+- Creates a logger configured with `enrichPlugin` and `httpBatchingPlugin`.
+- Emits a sequence of logs to exercise batching and error flush behavior.
+- Demonstrates graceful shutdown with `logger.flush()` and `logger.close()`.
+
+Run the example (quick):
+```bash
+# Run directly with ts-node (recommended for quick demo)
+npx ts-node logger/examples/plugin-example.ts
+
+# Or compile and run
+npx tsc logger/examples/plugin-example.ts --esModuleInterop --module es2022 --target es2022
+node logger/examples/plugin-example.js
+```
+
+Why this example is useful
+- Shows recommended plugin usage patterns: keep `onRecord()` lightweight, use batching for network sinks, and call `flush()`/`close()` during shutdown.
+- Provides a concrete testbed for experimenting with `maxBatchSize`, `maxWaitMs`, `transform`, and enrichment options.
+
+Tip: when integrating with a real ingestion endpoint, replace the local receiver URL in the example with your endpoint and adjust headers/transform accordingly.
+
 ### Microservice with distributed tracing
 
 ```typescript
