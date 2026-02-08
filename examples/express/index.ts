@@ -1,6 +1,7 @@
+// biome-ignore-all lint: it's an example code
 import { createLogger, expressErrorMiddleware, expressMiddleware } from "cenglu";
-import express from "express";
 import { randomInt } from "crypto";
+import express from "express";
 
 // Create logger
 const logger = createLogger({

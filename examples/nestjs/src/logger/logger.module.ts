@@ -1,19 +1,20 @@
+// biome-ignore-all lint: it's an example code
 import {
-  DynamicModule,
+  type DynamicModule,
   Global,
-  InjectionToken,
+  type InjectionToken,
   Module,
-  OptionalFactoryDependency,
-  Provider,
-} from '@nestjs/common';
+  type OptionalFactoryDependency,
+  type Provider,
+} from "@nestjs/common";
 import {
-  Logger,
   CENGLU_LOGGER,
-  NestLoggerModuleOptions,
-  NestLoggerService,
-  NestLoggerModuleAsyncOptions,
   CENGLU_LOGGER_OPTIONS,
-} from 'cenglu';
+  Logger,
+  type NestLoggerModuleAsyncOptions,
+  type NestLoggerModuleOptions,
+  NestLoggerService,
+} from "cenglu";
 
 @Global()
 @Module({})
@@ -46,14 +47,12 @@ export class LoggerModule {
   }
 
   static forRootAsync(options: NestLoggerModuleAsyncOptions): DynamicModule {
-    const asyncProviders = this.createAsyncProviders(options);
+    const asyncProviders = LoggerModule.createAsyncProviders(options);
 
     return {
       module: LoggerModule,
       global: options.isGlobal ?? true,
-      imports: (options.imports ?? []) as Array<
-        DynamicModule | Promise<DynamicModule>
-      >,
+      imports: (options.imports ?? []) as Array<DynamicModule | Promise<DynamicModule>>,
       providers: [
         ...asyncProviders,
         {
@@ -66,16 +65,12 @@ export class LoggerModule {
     };
   }
 
-  private static createAsyncProviders(
-    options: NestLoggerModuleAsyncOptions,
-  ): Provider[] {
+  private static createAsyncProviders(options: NestLoggerModuleAsyncOptions): Provider[] {
     return [
       {
         provide: CENGLU_LOGGER_OPTIONS,
         useFactory: options.useFactory,
-        inject: (options.inject ?? []) as Array<
-          InjectionToken | OptionalFactoryDependency
-        >,
+        inject: (options.inject ?? []) as Array<InjectionToken | OptionalFactoryDependency>,
       },
       {
         provide: CENGLU_LOGGER,
@@ -90,11 +85,6 @@ export function InjectLogger(): ParameterDecorator {
   return (target, propertyKey) => {
     // This would integrate with NestJS's DI system
     // For now, we use the simpler approach of injecting CENGLU_LOGGER
-    Reflect.defineMetadata(
-      'design:paramtypes',
-      [Logger],
-      target,
-      propertyKey as string,
-    );
+    Reflect.defineMetadata("design:paramtypes", [Logger], target, propertyKey as string);
   };
 }

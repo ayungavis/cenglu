@@ -1,11 +1,12 @@
-import { NestFactory } from '@nestjs/core';
-import { createLogger, NestLoggerService } from 'cenglu';
-import { AppModule } from './app.module';
+// biome-ignore-all lint: it's an example code
+import { NestFactory } from "@nestjs/core";
+import { createLogger, NestLoggerService } from "cenglu";
+import { AppModule } from "./app.module";
 
 async function bootstrap() {
   const logger = createLogger({
-    service: 'nestjs-example',
-    level: 'debug',
+    service: "nestjs-example",
+    level: "debug",
     pretty: { enabled: true },
   });
 
@@ -18,7 +19,7 @@ async function bootstrap() {
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
 
-  logger.info('Application started', { port });
+  logger.info("Application started", { port });
 }
 
 void bootstrap();
