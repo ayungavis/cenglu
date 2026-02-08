@@ -1,0 +1,747 @@
+---
+title: Formatters
+description: Output log formats for different destinations and platforms
+---
+
+# Formatters
+
+Cenglu supports multiple output formats optimized for different logging platforms and use cases. Choose the format that best matches your log aggregation system or operational requirements.
+
+## Quick Start
+
+Set the output format using the `structured` option:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  structured: {
+    type: "json",  // json | ecs | datadog | splunk | logfmt
+  },
+});
+
+logger.info("User logged in", { userId: 123 });
+```
+
+## Available Formats
+
+### JSON (Default)
+
+Standard JSON format with all log record fields:
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "json",
+  },
+});
+
+logger.info("User logged in", { userId: 123, email: "user@example.com" });
+```
+
+**Output:**
+```json
+{
+  "level": "info",
+  "msg": "User logged in",
+  "time": 1705334400000,
+  "context": {
+    "userId": 123,
+    "email": "user@example.com"
+  },
+  "service": "my-app",
+  "env": "production",
+  "version": "1.0.0",
+  "hostname": "server-01",
+  "pid": 12345
+}
+```
+
+**Use when:**
+- Generic JSON logging
+- Custom log processing pipelines
+- Maximum flexibility
+- Default choice for most applications
+
+**Characteristics:**
+- Simple, flat structure
+- All fields included
+- Easy to parse
+- Compatible with any JSON-based system
+
+### ECS (Elastic Common Schema)
+
+Elasticsearch-compatible format following the [ECS specification](https://www.elastic.co/guide/en/ecs/current/index.html):
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "ecs",
+  },
+});
+
+logger.info("User logged in", { userId: 123 });
+```
+
+**Output:**
+```json
+{
+  "@timestamp": "2024-01-15T12:00:00.000Z",
+  "message": "User logged in",
+  "log.level": "info",
+  "service.name": "my-app",
+  "service.version": "1.0.0",
+  "service.environment": "production",
+  "event.dataset": "my-app.production",
+  "trace.id": "abc123",
+  "span.id": "def456",
+  "labels": {
+    "userId": 123
+  }
+}
+```
+
+**Use when:**
+- Logging to Elasticsearch
+- Using Elastic Stack (ELK/Elastic Cloud)
+- Following ECS standards
+- Need structured field mapping
+
+**Characteristics:**
+- Dotted field notation (`service.name`, `log.level`)
+- `@timestamp` in ISO 8601 format
+- Context mapped to `labels`
+- Error details in `error.*` fields
+- Trace context in `trace.id` and `span.id`
+
+**ECS field mapping:**
+- `@timestamp` - ISO timestamp
+- `message` - Log message
+- `log.level` - Log level
+- `service.name` - Service name
+- `service.version` - Service version
+- `service.environment` - Environment
+- `trace.id` - Trace ID (distributed tracing)
+- `span.id` - Span ID (distributed tracing)
+- `labels.*` - Custom context fields
+- `error.type` - Error name
+- `error.message` - Error message
+- `error.stack_trace` - Stack trace
+
+### Datadog
+
+Datadog-optimized format with proper field names and structure:
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "datadog",
+  },
+});
+
+logger.info("User logged in", { userId: 123, action: "login" });
+```
+
+**Output:**
+```json
+{
+  "message": "User logged in",
+  "status": "info",
+  "level": "info",
+  "service": "my-app",
+  "env": "production",
+  "version": "1.0.0",
+  "timestamp": 1705334400000,
+  "dd": {
+    "trace_id": "abc123",
+    "span_id": "def456"
+  },
+  "userId": 123,
+  "action": "login"
+}
+```
+
+**Use when:**
+- Logging to Datadog
+- Using Datadog APM
+- Need Datadog-specific features (facets, trace correlation)
+
+**Characteristics:**
+- `status` field for log level
+- Context fields spread at top level (for Datadog facets)
+- Trace context in `dd.trace_id` and `dd.span_id`
+- Timestamp as milliseconds since epoch
+- Error details in `error.*` fields
+
+**Datadog field mapping:**
+- `message` - Log message
+- `status` - Log level (for UI display)
+- `level` - Log level (for filtering)
+- `service` - Service name
+- `env` - Environment
+- `version` - Service version
+- `timestamp` - Unix timestamp (milliseconds)
+- `dd.trace_id` - Trace ID (APM correlation)
+- `dd.span_id` - Span ID (APM correlation)
+- `error.kind` - Error type
+- `error.message` - Error message
+- `error.stack` - Stack trace
+- `*` - Context fields at top level
+
+### Splunk
+
+Splunk HEC (HTTP Event Collector) format:
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "splunk",
+  },
+});
+
+logger.info("User logged in", { userId: 123 });
+```
+
+**Output:**
+```json
+{
+  "time": 1705334400,
+  "host": "server-01",
+  "source": "my-app",
+  "sourcetype": "_json",
+  "event": {
+    "message": "User logged in",
+    "level": "info",
+    "service": "my-app",
+    "env": "production",
+    "version": "1.0.0",
+    "traceId": "abc123",
+    "spanId": "def456",
+    "context": {
+      "userId": 123
+    }
+  }
+}
+```
+
+**Use when:**
+- Logging to Splunk
+- Using Splunk HEC endpoint
+- Need Splunk indexing metadata
+
+**Characteristics:**
+- `time` in seconds (not milliseconds)
+- Event data nested in `event` field
+- Metadata at top level (`host`, `source`, `sourcetype`)
+- Compatible with Splunk HEC
+
+**Configure Splunk options:**
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "splunk",
+  },
+  // Pass options via adapter or custom formatter
+});
+```
+
+**Splunk field mapping:**
+- `time` - Unix timestamp (seconds)
+- `host` - Hostname
+- `source` - Source name (service name)
+- `sourcetype` - Source type (`_json`)
+- `index` - Splunk index (optional)
+- `event.message` - Log message
+- `event.level` - Log level
+- `event.context` - Custom context fields
+- `event.error` - Error details
+
+### Logfmt
+
+Human-readable key-value format popularized by Heroku:
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "logfmt",
+  },
+});
+
+logger.info("User logged in", { userId: 123, email: "user@example.com" });
+```
+
+**Output:**
+```
+time=2024-01-15T12:00:00.000Z level=info msg="User logged in" service=my-app env=production userId=123 email=user@example.com
+```
+
+**Use when:**
+- Human-readable structured logs
+- Command-line tools
+- Simple parsing requirements
+- Heroku or 12-factor app style logging
+
+**Characteristics:**
+- Space-separated key-value pairs
+- Values quoted if they contain spaces or special characters
+- Flat structure (no nesting)
+- Easy to read and grep
+- Compact format
+
+**Logfmt field mapping:**
+- `time` - ISO 8601 timestamp
+- `level` - Log level
+- `msg` - Log message (quoted if contains spaces)
+- `service` - Service name
+- `env` - Environment
+- `version` - Version
+- `trace_id` - Trace ID
+- `span_id` - Span ID
+- Context fields at top level
+- `error_name` - Error name
+- `error_message` - Error message (quoted)
+
+## Custom Transform
+
+Transform the log record before formatting:
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "json",
+    transform: (record) => ({
+      // Custom structure
+      timestamp: new Date(record.time).toISOString(),
+      severity: record.level.toUpperCase(),
+      message: record.msg,
+      metadata: {
+        service: record.service,
+        env: record.env,
+        ...record.context,
+      },
+    }),
+  },
+});
+
+logger.info("User logged in", { userId: 123 });
+```
+
+**Output:**
+```json
+{
+  "timestamp": "2024-01-15T12:00:00.000Z",
+  "severity": "INFO",
+  "message": "User logged in",
+  "metadata": {
+    "service": "my-app",
+    "env": "production",
+    "userId": 123
+  }
+}
+```
+
+## Pretty Format (Development)
+
+Pretty, colored format for development:
+
+```typescript
+const logger = createLogger({
+  pretty: {
+    enabled: process.env.NODE_ENV !== "production",
+    colors: true,
+    timestamp: "local",
+  },
+});
+
+logger.info("User logged in", { userId: 123 });
+```
+
+**Output:**
+```
+[2024-01-15 12:00:00] INFO  User logged in
+  userId: 123
+```
+
+See [Pretty Formatting](/docs/features/pretty-formatting) for details.
+
+## Format Comparison
+
+| Format | Size | Human Readable | Parse Speed | Use Case |
+|--------|------|----------------|-------------|----------|
+| JSON | Medium | ⚠️ | Fast | General purpose |
+| ECS | Medium | ❌ | Fast | Elasticsearch |
+| Datadog | Medium | ❌ | Fast | Datadog |
+| Splunk | Large | ❌ | Fast | Splunk HEC |
+| Logfmt | Small | ✅ | Medium | CLI tools, Heroku |
+| Pretty | Large | ✅ | N/A | Development |
+
+## Platform-Specific Examples
+
+### Elasticsearch / Kibana
+
+```typescript
+const logger = createLogger({
+  service: "user-api",
+  env: process.env.NODE_ENV,
+  structured: {
+    type: "ecs",
+  },
+});
+
+logger.info("User registered", {
+  userId: 123,
+  email: "user@example.com",
+  country: "US",
+});
+```
+
+**Kibana query:**
+```
+service.name:"user-api" AND labels.country:"US"
+```
+
+### Datadog
+
+```typescript
+const logger = createLogger({
+  service: "user-api",
+  env: process.env.DD_ENV || "production",
+  version: process.env.DD_VERSION,
+  structured: {
+    type: "datadog",
+  },
+});
+
+logger.info("User registered", {
+  userId: 123,
+  action: "registration",
+  plan: "premium",
+});
+```
+
+**Datadog query:**
+```
+service:user-api @action:registration @plan:premium
+```
+
+### Splunk
+
+```typescript
+const logger = createLogger({
+  service: "user-api",
+  structured: {
+    type: "splunk",
+  },
+});
+
+logger.info("User registered", { userId: 123 });
+```
+
+**Splunk query:**
+```
+source="user-api" event.level="info" event.context.userId=123
+```
+
+### Google Cloud Logging
+
+Use JSON with custom transform:
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "json",
+    transform: (record) => ({
+      severity: record.level.toUpperCase(),
+      message: record.msg,
+      timestamp: new Date(record.time).toISOString(),
+      "logging.googleapis.com/trace": record.traceId,
+      "logging.googleapis.com/spanId": record.spanId,
+      ...record.context,
+    }),
+  },
+});
+```
+
+### AWS CloudWatch
+
+Use JSON format (default):
+
+```typescript
+const logger = createLogger({
+  service: process.env.AWS_LAMBDA_FUNCTION_NAME,
+  structured: {
+    type: "json",
+  },
+});
+```
+
+CloudWatch Insights query:
+```
+fields @timestamp, msg, context.userId
+| filter level = "error"
+| sort @timestamp desc
+```
+
+## Environment-Based Format
+
+Switch format based on environment:
+
+```typescript
+const logger = createLogger({
+  service: "my-app",
+  env: process.env.NODE_ENV,
+
+  // Pretty in development, structured in production
+  pretty: {
+    enabled: process.env.NODE_ENV !== "production",
+  },
+
+  structured: {
+    type: process.env.NODE_ENV === "production"
+      ? (process.env.LOG_FORMAT as "json" | "ecs" | "datadog") || "json"
+      : "json",
+  },
+});
+```
+
+**Usage:**
+```bash
+# Development (pretty)
+npm run dev
+
+# Production (JSON)
+NODE_ENV=production node app.js
+
+# Production (ECS format for Elasticsearch)
+NODE_ENV=production LOG_FORMAT=ecs node app.js
+
+# Production (Datadog format)
+NODE_ENV=production LOG_FORMAT=datadog node app.js
+```
+
+## Multiple Formats (Multiple Transports)
+
+Output different formats to different destinations:
+
+```typescript
+import { createLogger, createConsoleTransport, createFileTransport } from "cenglu";
+
+const logger = createLogger({
+  service: "my-app",
+
+  transports: [
+    // Console: Pretty format for development
+    createConsoleTransport({
+      enabled: process.env.NODE_ENV !== "production",
+    }),
+
+    // File: JSON format for production
+    createFileTransport({
+      enabled: process.env.NODE_ENV === "production",
+      dir: "./logs",
+    }),
+  ],
+
+  // Default format
+  structured: {
+    type: process.env.NODE_ENV === "production" ? "json" : "json",
+  },
+
+  pretty: {
+    enabled: process.env.NODE_ENV !== "production",
+  },
+});
+```
+
+**Note:** Format applies to all transports. For transport-specific formatting, use custom transports or adapters.
+
+## Custom Formatter Function
+
+Use standalone formatter functions:
+
+```typescript
+import { formatEcs, formatDatadog, formatLogfmt } from "cenglu";
+import type { LogRecord } from "cenglu";
+
+const record: LogRecord = {
+  level: "info",
+  msg: "User logged in",
+  time: Date.now(),
+  context: { userId: 123 },
+  service: "my-app",
+};
+
+const ecsLog = formatEcs(record);
+const datadogLog = formatDatadog(record);
+const logfmtLog = formatLogfmt(record);
+
+console.log(ecsLog);     // ECS JSON
+console.log(datadogLog); // Datadog JSON
+console.log(logfmtLog);  // Logfmt string
+```
+
+## Performance
+
+### Benchmarks
+
+```
+JSON formatting:     ~0.015ms per log
+ECS formatting:      ~0.018ms per log
+Datadog formatting:  ~0.017ms per log
+Splunk formatting:   ~0.019ms per log
+Logfmt formatting:   ~0.012ms per log (fastest)
+Pretty formatting:   ~0.035ms per log (slowest)
+```
+
+### Best Practices
+
+1. **Production**: Use JSON, ECS, or Datadog (platform-specific)
+2. **Development**: Use pretty format
+3. **CLI tools**: Use logfmt
+4. **High-throughput**: Use JSON or logfmt (fastest)
+5. **Avoid**: Pretty format in production (slow, large output)
+
+## Testing
+
+### Test Formatter Output
+
+```typescript
+import { createLogger } from "cenglu";
+import { test, expect } from "vitest";
+
+test("formats logs as JSON", () => {
+  const logs: string[] = [];
+
+  const logger = createLogger({
+    structured: { type: "json" },
+    adapters: [
+      {
+        name: "test",
+        handle: (record, formatted) => {
+          logs.push(formatted);
+        },
+      },
+    ],
+  });
+
+  logger.info("Test message", { userId: 123 });
+
+  const parsed = JSON.parse(logs[0]);
+  expect(parsed.msg).toBe("Test message");
+  expect(parsed.context.userId).toBe(123);
+});
+```
+
+### Test Custom Transform
+
+```typescript
+test("applies custom transform", () => {
+  const logs: string[] = [];
+
+  const logger = createLogger({
+    structured: {
+      type: "json",
+      transform: (record) => ({
+        severity: record.level.toUpperCase(),
+        text: record.msg,
+      }),
+    },
+    adapters: [
+      {
+        name: "test",
+        handle: (record, formatted) => {
+          logs.push(formatted);
+        },
+      },
+    ],
+  });
+
+  logger.info("Test");
+
+  const parsed = JSON.parse(logs[0]);
+  expect(parsed.severity).toBe("INFO");
+  expect(parsed.text).toBe("Test");
+});
+```
+
+## Troubleshooting
+
+### Format Not Applied
+
+**Problem:** Logs still in default format
+
+**Solutions:**
+
+1. Check `structured` config:
+   ```typescript
+   structured: {
+     type: "ecs",  // Not "ECS" (case-sensitive)
+   }
+   ```
+
+2. Verify format is supported:
+   ```typescript
+   // Valid: json, ecs, datadog, splunk, logfmt
+   // Invalid: xml, yaml, etc.
+   ```
+
+3. Check pretty mode isn't overriding:
+   ```typescript
+   pretty: {
+     enabled: false,  // Disable for structured format
+   }
+   ```
+
+### Fields Missing in Output
+
+**Problem:** Expected fields not in formatted output
+
+**Solutions:**
+
+1. Check field names for format:
+   ```typescript
+   // ECS: Uses labels.userId (not context.userId)
+   // Datadog: Uses userId at top level (not context.userId)
+   ```
+
+2. Verify context is provided:
+   ```typescript
+   logger.info("Message", { userId: 123 }); // ✅ Included
+   logger.info("Message"); // ❌ No context
+   ```
+
+3. Check transform function:
+   ```typescript
+   transform: (record) => ({
+     message: record.msg,
+     // Must include all desired fields
+   })
+   ```
+
+### Parse Errors
+
+**Problem:** Log aggregation system can't parse logs
+
+**Solutions:**
+
+1. Use correct format for platform:
+   ```typescript
+   // Elasticsearch → use "ecs"
+   // Datadog → use "datadog"
+   // Generic → use "json"
+   ```
+
+2. Check for invalid JSON:
+   ```typescript
+   // Circular references handled automatically
+   // BigInt converted to string
+   // Errors serialized properly
+   ```
+
+## Next Steps
+
+- [Pretty Formatting](/docs/features/pretty-formatting) - Readable development logs
+- [Transports](/docs/transports/console) - Where logs are sent
+- [Custom Transports](/docs/transports/custom) - Format-specific destinations
+- [Configuration](/docs/getting-started/configuration) - Full configuration options

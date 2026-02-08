@@ -1,0 +1,637 @@
+---
+title: Types Reference
+description: Complete TypeScript type definitions for cenglu logger
+---
+
+# Types Reference
+
+Complete TypeScript type definitions for cenglu. All types are exported from the main package and can be imported directly.
+
+```typescript
+import type {
+  Logger,
+  LogLevel,
+  LogRecord,
+  LoggerOptions,
+  Transport,
+  LoggerPlugin,
+  // ... any other types
+} from "cenglu";
+```
+
+## Core Types
+
+### LogLevel
+
+Log severity levels in order of priority:
+
+```typescript
+type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+```
+
+**Priority order:**
+- `trace` (10) - Most verbose, development debugging
+- `debug` (20) - Detailed debugging information
+- `info` (30) - General informational messages (default)
+- `warn` (40) - Warning messages
+- `error` (50) - Error messages
+- `fatal` (60) - Critical errors that may cause shutdown
+
+### Bindings
+
+Context object with arbitrary key-value pairs:
+
+```typescript
+type Bindings = {
+  [key: string]: unknown;
+};
+```
+
+Used for:
+- Log context: `logger.info("message", { userId: 123 })`
+- Child logger bindings: `logger.child({ service: "auth" })`
+- Temporary bindings: `logger.with({ requestId: "abc" })`
+
+### LogRecord
+
+Complete log record structure passed through the logging pipeline:
+
+```typescript
+type LogRecord = {
+  time: number;           // Timestamp in milliseconds since epoch
+  level: LogLevel;        // Log level
+  msg: string;            // Log message
+  context?: Bindings;     // Additional context
+  err?: ErrorInfo | null; // Error details (if present)
+  service?: string;       // Service name
+  env?: string;           // Environment (dev, prod, etc.)
+  version?: string;       // Application version
+  traceId?: string;       // Distributed tracing ID
+  spanId?: string;        // Distributed tracing span ID
+};
+```
+
+**Example:**
+```typescript
+{
+  time: 1700000000000,
+  level: "info",
+  msg: "User created",
+  context: { userId: 123, email: "user@example.com" },
+  service: "user-service",
+  env: "production",
+  version: "1.2.3",
+  traceId: "abc-123",
+}
+```
+
+### ErrorInfo
+
+Structured error information extracted from Error objects:
+
+```typescript
+type ErrorInfo = {
+  name?: string;                // Error name (e.g., "ValidationError")
+  message?: string;             // Error message
+  stack?: string;               // Stack trace
+  code?: string | number;       // Error code
+  cause?: ErrorInfo;            // Error cause chain
+  [key: string]: unknown;       // Additional error properties
+};
+```
+
+Supports error cause chains for nested errors:
+
+```typescript
+{
+  name: "ApiError",
+  message: "Failed to fetch user",
+  code: "API_ERROR",
+  cause: {
+    name: "NetworkError",
+    message: "Connection timeout",
+    code: "ETIMEDOUT"
+  }
+}
+```
+
+### TraceContext
+
+Distributed tracing context for correlation across services:
+
+```typescript
+type TraceContext = {
+  traceId?: string;  // Unique trace identifier
+  spanId?: string;   // Unique span identifier
+};
+```
+
+## Configuration Types
+
+### LoggerOptions
+
+Main configuration object for `createLogger()`:
+
+```typescript
+type LoggerOptions = {
+  // Basic configuration
+  level?: LogLevel;              // Minimum log level (default: "info")
+  service?: string;              // Service name
+  env?: string;                  // Environment name
+  version?: string;              // Application version
+  bindings?: Bindings;           // Default bindings for all logs
+
+  // Output configuration
+  console?: ConsoleOptions;      // Console output settings
+  file?: FileOptions;            // File output settings
+  pretty?: PrettyOptions;        // Pretty formatting for development
+  structured?: StructuredFormat; // Structured format (JSON, ECS, etc.)
+
+  // Extensions
+  adapters?: ProviderAdapter[];  // Legacy provider adapters
+  transports?: Transport[];      // Custom transports
+  plugins?: LoggerPlugin[];      // Logger plugins
+
+  // Advanced features
+  sampling?: SamplingOptions;    // Log sampling configuration
+  redaction?: RedactionOptions;  // Sensitive data redaction
+
+  // Context & correlation
+  correlationId?: string | (() => string | undefined);  // Correlation ID generator
+  traceProvider?: () => TraceContext | undefined;       // Trace context provider
+  useAsyncContext?: boolean;     // Enable AsyncLocalStorage (default: true)
+
+  // Testing/mocking
+  now?: () => number;            // Custom time function
+  random?: () => number;         // Custom random function
+};
+```
+
+### ConsoleOptions
+
+Console transport configuration:
+
+```typescript
+type ConsoleOptions = {
+  enabled?: boolean;                     // Enable console output (default: true)
+  stream?: NodeJS.WritableStream;        // Output stream for non-error logs
+  errorStream?: NodeJS.WritableStream;   // Output stream for error logs
+};
+```
+
+**Example:**
+```typescript
+{
+  enabled: true,
+  stream: process.stdout,
+  errorStream: process.stderr,
+}
+```
+
+### FileOptions
+
+File transport configuration with rotation support:
+
+```typescript
+type FileOptions = {
+  enabled?: boolean;           // Enable file logging (default: false)
+  dir?: string;                // Log directory (default: "./logs")
+  filename?: (info: {          // Custom filename generator
+    date: Date;
+    level: LogLevel;
+    sequence: number;
+  }) => string;
+  separateErrors?: boolean;    // Write errors to separate file
+  rotation?: FileRotationPolicy; // File rotation settings
+};
+```
+
+### FileRotationPolicy
+
+File rotation and retention policy:
+
+```typescript
+type FileRotationPolicy = {
+  intervalDays?: number;    // Rotate every N days (default: 1)
+  maxBytes?: number;        // Max file size before rotation
+  maxFiles?: number;        // Max number of rotated files to keep
+  compress?: "gzip" | false; // Compression format (default: false)
+  retentionDays?: number;   // Delete files older than N days
+};
+```
+
+**Example:**
+```typescript
+{
+  intervalDays: 1,
+  maxBytes: 10 * 1024 * 1024,  // 10MB
+  maxFiles: 7,
+  compress: "gzip",
+  retentionDays: 30,
+}
+```
+
+### PrettyOptions
+
+Human-readable formatting for development:
+
+```typescript
+type PrettyOptions = {
+  enabled?: boolean;                      // Enable pretty formatting
+  theme?: Partial<Theme>;                 // Color theme
+  formatter?: (record: LogRecord) => string; // Custom formatter
+};
+```
+
+### Theme
+
+Color theme for pretty formatting:
+
+```typescript
+type Theme = {
+  dim: (s: string) => string;      // Dim text
+  gray: (s: string) => string;     // Gray text
+  red: (s: string) => string;      // Red text (errors)
+  yellow: (s: string) => string;   // Yellow text (warnings)
+  green: (s: string) => string;    // Green text (success)
+  cyan: (s: string) => string;     // Cyan text (info)
+  magenta: (s: string) => string;  // Magenta text
+  bold: (s: string) => string;     // Bold text
+};
+```
+
+### StructuredFormat
+
+Structured output format configuration:
+
+```typescript
+type StructuredFormat = {
+  type?: "json" | "ecs" | "datadog" | "splunk" | "logfmt";  // Format type
+  transform?: (record: LogRecord) => unknown;                // Custom transformer
+};
+```
+
+**Format types:**
+- `json` - Standard JSON format
+- `ecs` - Elasticsearch Common Schema
+- `datadog` - Datadog log format
+- `splunk` - Splunk-compatible format
+- `logfmt` - Logfmt key=value format
+
+### SamplingOptions
+
+Log sampling configuration:
+
+```typescript
+type SamplingOptions = {
+  rates?: Partial<Record<LogLevel, number>>;  // Per-level sampling rates
+  defaultRate?: number;                       // Default rate (0.0 to 1.0)
+};
+```
+
+**Example:**
+```typescript
+{
+  defaultRate: 0.1,      // Sample 10% by default
+  rates: {
+    error: 1.0,          // Always log errors
+    warn: 0.5,           // Sample 50% of warnings
+    debug: 0.01,         // Sample 1% of debug logs
+  }
+}
+```
+
+### RedactionOptions
+
+Sensitive data redaction configuration:
+
+```typescript
+type RedactionOptions = {
+  enabled?: boolean;                                  // Enable redaction
+  patterns?: RedactionPattern[];                      // Custom patterns
+  paths?: string[];                                   // Object paths to redact
+  useDefaults?: boolean;                              // Use built-in patterns
+  customRedactor?: (value: unknown, key?: string) => unknown; // Custom redactor
+};
+```
+
+### RedactionPattern
+
+Custom redaction pattern:
+
+```typescript
+type RedactionPattern = {
+  pattern: RegExp;       // Regex pattern to match
+  replacement?: string;  // Replacement text (default: "[REDACTED]")
+  name?: string;         // Pattern name for debugging
+};
+```
+
+**Example:**
+```typescript
+{
+  pattern: /api[_-]?key[:\s]+[\w-]+/gi,
+  replacement: "[API_KEY_REDACTED]",
+  name: "api-key",
+}
+```
+
+## Transport Types
+
+### Transport
+
+Synchronous transport interface:
+
+```typescript
+type Transport = {
+  /**
+   * Write a log record
+   * @param record - The log record
+   * @param formatted - Pre-formatted string (JSON, etc.)
+   * @param isError - Whether this is an error-level log
+   */
+  write(record: LogRecord, formatted: string, isError: boolean): void;
+
+  /**
+   * Flush any buffered logs (optional)
+   */
+  flush?(): Promise<void>;
+
+  /**
+   * Close transport and cleanup resources (optional)
+   */
+  close?(): Promise<void>;
+};
+```
+
+### AsyncTransport
+
+Asynchronous transport interface:
+
+```typescript
+type AsyncTransport = {
+  /**
+   * Write a log record asynchronously
+   */
+  write(record: LogRecord, formatted: string, isError: boolean): Promise<void>;
+
+  /**
+   * Flush any buffered logs (optional)
+   */
+  flush?(): Promise<void>;
+
+  /**
+   * Close transport and cleanup resources (optional)
+   */
+  close?(): Promise<void>;
+
+  /**
+   * Error handler for async operations (optional)
+   */
+  onError?: (error: Error, record: LogRecord) => void;
+};
+```
+
+## Plugin Types
+
+### LoggerPlugin
+
+Plugin interface for extending logger functionality:
+
+```typescript
+type LoggerPlugin = {
+  readonly name: string;         // Unique plugin name
+  readonly order?: number;       // Execution order (default: 100)
+
+  /**
+   * Called once during logger initialization
+   */
+  onInit?(logger: unknown): void;
+
+  /**
+   * Transform or filter log records
+   * Return null to drop the log
+   */
+  onRecord?(record: LogRecord): LogRecord | null;
+
+  /**
+   * Modify formatted output
+   */
+  onFormat?(record: LogRecord, formatted: string): string;
+
+  /**
+   * Post-write hook (after transport write)
+   */
+  onWrite?(record: LogRecord, formatted: string): void;
+
+  /**
+   * Called on logger.flush()
+   */
+  onFlush?(): Promise<void> | void;
+
+  /**
+   * Called on logger.close()
+   */
+  onClose?(): Promise<void> | void;
+};
+```
+
+**Execution order:**
+1. `onInit` - During logger creation
+2. `onRecord` - Before formatting (can filter/transform)
+3. `onFormat` - After formatting
+4. Transport write
+5. `onWrite` - After transport write
+6. `onFlush` - On flush
+7. `onClose` - On close
+
+### ProviderAdapter
+
+Legacy adapter interface for provider compatibility:
+
+```typescript
+type ProviderAdapter = {
+  readonly name: string;     // Adapter name
+  level?: LogLevel;          // Adapter-specific level
+  handle(record: LogRecord): void | Promise<void>; // Handle log record
+};
+```
+
+## State Types
+
+### LoggerState
+
+Current logger state (read-only):
+
+```typescript
+type LoggerState = {
+  readonly level: LogLevel;       // Current log level
+  readonly service?: string;      // Service name
+  readonly env?: string;          // Environment
+  readonly version?: string;      // Version
+  readonly bindings: Readonly<Bindings>; // Current bindings
+};
+```
+
+Access via `logger.state`:
+
+```typescript
+const { level, service, bindings } = logger.state;
+```
+
+### LoggerConfig
+
+Current logger configuration (read-only):
+
+```typescript
+type LoggerConfig = {
+  readonly pretty: Readonly<{
+    enabled: boolean;
+    theme: Partial<Theme>;
+    formatter?: (record: LogRecord) => string;
+  }>;
+
+  readonly structured: Readonly<{
+    type: "json" | "ecs" | "datadog" | "splunk" | "logfmt";
+    transform?: (record: LogRecord) => unknown;
+  }>;
+
+  readonly sampling?: Readonly<SamplingOptions>;
+  readonly correlationId?: string | (() => string | undefined);
+  readonly traceProvider?: () => TraceContext | undefined;
+  readonly now: () => number;
+  readonly random: () => number;
+  readonly useAsyncContext: boolean;
+};
+```
+
+Access via `logger.config`:
+
+```typescript
+const { structured, sampling } = logger.config;
+```
+
+## Utility Types
+
+### TimerResult
+
+Return type from `logger.time()`:
+
+```typescript
+type TimerResult = {
+  (): void;                              // End timer and log
+  end(): void;                           // End timer and log
+  elapsed(): number;                     // Get elapsed time without logging
+  endWithContext(context: Bindings): void; // End with additional context
+};
+```
+
+**Usage:**
+```typescript
+const done = logger.time("operation", { taskId: 123 });
+// ... do work ...
+done(); // Logs with duration
+
+// Or
+const timer = logger.time("query");
+const ms = timer.elapsed();  // Get elapsed time
+timer.endWithContext({ rows: 10 }); // End with context
+```
+
+### TreeOptions
+
+Options for object tree formatting:
+
+```typescript
+type TreeOptions = {
+  maxDepth?: number;         // Maximum nesting depth
+  maxArrayLength?: number;   // Maximum array elements to show
+  maxStringLength?: number;  // Maximum string length
+};
+```
+
+### FormatterType
+
+Available formatter types:
+
+```typescript
+type FormatterType = "json" | "pretty" | "ecs" | "datadog" | "splunk" | "logfmt";
+```
+
+## Type Guards
+
+Cenglu doesn't export type guards, but you can create your own:
+
+```typescript
+function isLogRecord(obj: unknown): obj is LogRecord {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    "level" in obj &&
+    "msg" in obj &&
+    "time" in obj
+  );
+}
+
+function isErrorInfo(obj: unknown): obj is ErrorInfo {
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    ("message" in obj || "name" in obj || "stack" in obj)
+  );
+}
+```
+
+## Import Examples
+
+```typescript
+// Core types
+import type {
+  Logger,
+  LogLevel,
+  LogRecord,
+  Bindings,
+  ErrorInfo,
+} from "cenglu";
+
+// Configuration types
+import type {
+  LoggerOptions,
+  ConsoleOptions,
+  FileOptions,
+  PrettyOptions,
+  StructuredFormat,
+  SamplingOptions,
+  RedactionOptions,
+} from "cenglu";
+
+// Extension types
+import type {
+  Transport,
+  AsyncTransport,
+  LoggerPlugin,
+  ProviderAdapter,
+} from "cenglu";
+
+// State types
+import type {
+  LoggerState,
+  LoggerConfig,
+  TimerResult,
+} from "cenglu";
+
+// Utility types
+import type {
+  TraceContext,
+  Theme,
+  TreeOptions,
+  FormatterType,
+} from "cenglu";
+```
+
+## Related Documentation
+
+- [Logger API](/docs/api/logger) - Logger class methods and usage
+- [Plugins API](/docs/plugins/creating-plugins) - Plugin development guide
+- [Custom Transports](/docs/transports/custom) - Transport development guide
+- [Configuration](/docs/getting-started/configuration) - Configuration guide

@@ -1,0 +1,634 @@
+---
+title: Koa Middleware
+description: Integrate cenglu with Koa applications
+---
+
+# Koa Middleware
+
+Cenglu provides comprehensive middleware for Koa with automatic request logging, correlation ID tracking, and context propagation.
+
+## Installation
+
+```typescript
+import Koa from "koa";
+import { createLogger, koaMiddleware } from "cenglu";
+```
+
+## Basic Usage
+
+```typescript
+import Koa from "koa";
+import { createLogger, koaMiddleware } from "cenglu";
+
+const app = new Koa();
+const logger = createLogger({ service: "api" });
+
+// Apply middleware
+app.use(koaMiddleware(logger));
+
+app.use(async (ctx) => {
+  // Logger is automatically attached with request context
+  ctx.logger.info("Processing request", { userId: ctx.query.userId });
+
+  ctx.body = { message: "Hello, World!" };
+});
+
+app.listen(3000);
+```
+
+## Automatic Features
+
+The middleware automatically:
+
+- ✅ Generates or extracts correlation IDs
+- ✅ Logs incoming requests
+- ✅ Logs outgoing responses with duration
+- ✅ Attaches logger to `ctx.logger` and `ctx.state.logger`
+- ✅ Attaches correlation ID to `ctx.correlationId` and `ctx.state.correlationId`
+- ✅ Sets correlation ID response header
+- ✅ Uses AsyncLocalStorage for context propagation
+- ✅ Catches and logs errors
+
+## Configuration Options
+
+```typescript
+app.use(koaMiddleware(logger, {
+  // Logging control
+  logRequests: true,         // Log incoming requests
+  logResponses: true,        // Log outgoing responses
+
+  // Data inclusion
+  includeHeaders: false,     // Include request headers (may contain sensitive data)
+  includeQuery: true,        // Include query parameters
+  includeBody: false,        // Include request body (requires koa-bodyparser)
+  includeResponseBody: false, // Include response body
+  maxResponseBodyLength: 1000,
+
+  // Correlation ID
+  correlationIdHeader: "x-correlation-id",
+  generateCorrelationId: () => crypto.randomUUID(),
+
+  // Path filtering
+  ignorePaths: ["/health", "/metrics", /^\/internal/],
+  skip: (ctx) => ctx.method === "OPTIONS",
+
+  // Security
+  redactHeaders: ["authorization", "cookie", "set-cookie"],
+
+  // Log levels
+  successLevel: "info",      // 2xx, 3xx
+  clientErrorLevel: "warn",  // 4xx
+  serverErrorLevel: "error", // 5xx
+
+  // Advanced
+  useAsyncContext: true,
+
+  // Custom messages
+  requestMessage: (ctx) => `${ctx.method} ${ctx.path}`,
+  responseMessage: (ctx, duration) =>
+    `${ctx.method} ${ctx.path} ${ctx.status} ${duration}ms`,
+}));
+```
+
+## Request Logging
+
+### Default Request Log
+
+```json
+{
+  "level": "info",
+  "msg": "GET /users/123",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "context": {
+    "url": "/users/123?includeDetails=true",
+    "query": { "includeDetails": "true" }
+  }
+}
+```
+
+### With Headers
+
+```typescript
+app.use(koaMiddleware(logger, {
+  includeHeaders: true,
+  redactHeaders: ["authorization", "cookie"],
+}));
+```
+
+## Response Logging
+
+### Default Response Log
+
+```json
+{
+  "level": "info",
+  "msg": "GET /users/123 200 42ms",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "context": {
+    "statusCode": 200,
+    "duration": 42
+  }
+}
+```
+
+### Log Levels by Status Code
+
+```typescript
+app.use(koaMiddleware(logger, {
+  successLevel: "info",      // 200-399
+  clientErrorLevel: "warn",  // 400-499
+  serverErrorLevel: "error", // 500-599
+}));
+```
+
+**Status Code Mapping:**
+- `200-399` → `info` (configurable with `successLevel`)
+- `400-499` → `warn` (configurable with `clientErrorLevel`)
+- `500-599` → `error` (configurable with `serverErrorLevel`)
+
+## Correlation IDs
+
+### Automatic Generation
+
+```typescript
+app.use(koaMiddleware(logger, {
+  correlationIdHeader: "x-correlation-id",
+  generateCorrelationId: () => crypto.randomUUID(),
+}));
+
+app.use(async (ctx) => {
+  console.log(ctx.correlationId); // "550e8400-e29b-41d4-a716-446655440000"
+
+  // All logs include correlation ID
+  ctx.logger.info("Processing request");
+
+  ctx.body = { users: [] };
+});
+```
+
+### Extract from Incoming Headers
+
+```typescript
+app.use(koaMiddleware(logger, {
+  correlationIdHeader: "x-correlation-id",
+}));
+
+// If client sends x-correlation-id or x-request-id header, it will be used
+```
+
+### Propagate to Downstream Services
+
+```typescript
+app.use(async (ctx) => {
+  const response = await fetch("https://api.example.com/users", {
+    headers: {
+      "x-correlation-id": ctx.correlationId, // Propagate
+    },
+  });
+
+  ctx.logger.info("Fetched users", {
+    count: response.data.length,
+  });
+
+  ctx.body = response.data;
+});
+```
+
+## Path Filtering
+
+### Ignore Specific Paths
+
+```typescript
+app.use(koaMiddleware(logger, {
+  ignorePaths: [
+    "/health",           // Exact match
+    "/metrics",          // Exact match
+    /^\/internal\//,     // Regex pattern
+  ],
+}));
+```
+
+### Custom Skip Logic
+
+```typescript
+app.use(koaMiddleware(logger, {
+  skip: (ctx) => {
+    // Skip OPTIONS requests
+    if (ctx.method === "OPTIONS") return true;
+
+    // Skip based on header
+    if (ctx.headers["x-skip-logging"]) return true;
+
+    return false;
+  },
+}));
+```
+
+## Error Handling
+
+### Automatic Error Logging
+
+The middleware catches errors and logs them automatically:
+
+```typescript
+app.use(koaMiddleware(logger));
+
+app.use(async (ctx) => {
+  throw new Error("Something went wrong");
+  // Error is automatically logged with full context
+});
+```
+
+### Error Middleware
+
+Use the error middleware for centralized error handling:
+
+```typescript
+import { koaMiddleware, koaErrorMiddleware } from "cenglu";
+
+// Error middleware FIRST
+app.use(koaErrorMiddleware(logger, {
+  exposeErrors: process.env.NODE_ENV !== "production",
+  formatError: (err, ctx) => ({
+    error: {
+      message: err.message,
+      code: err.code,
+    },
+    correlationId: ctx.correlationId,
+  }),
+  emitError: true, // Emit 'error' event on app
+}));
+
+// Then logging middleware
+app.use(koaMiddleware(logger));
+
+// Your routes
+app.use(async (ctx) => {
+  throw new Error("Something went wrong");
+});
+```
+
+### Error Log Output
+
+```json
+{
+  "level": "error",
+  "msg": "GET /users/123 500 12ms",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "err": {
+    "name": "Error",
+    "message": "Something went wrong",
+    "stack": "Error: Something went wrong\n    at ..."
+  },
+  "context": {
+    "statusCode": 500,
+    "duration": 12
+  }
+}
+```
+
+## AsyncLocalStorage Context
+
+Enable context propagation across async operations:
+
+```typescript
+app.use(koaMiddleware(logger, {
+  useAsyncContext: true, // Default: true
+}));
+
+app.use(async (ctx) => {
+  // Context is preserved across awaits
+  await someAsyncOperation();
+
+  // These logs still have request context
+  ctx.logger.info("Operation completed");
+
+  ctx.body = { success: true };
+});
+
+async function someAsyncOperation() {
+  // Can access context from anywhere in the call stack
+  const context = LoggerContext.get();
+  console.log(context?.correlationId);
+}
+```
+
+## Body Parsing
+
+To include request body in logs, use a body parser first:
+
+```typescript
+import bodyParser from "koa-bodyparser";
+
+// Body parser BEFORE logging middleware
+app.use(bodyParser());
+
+// Then logging middleware
+app.use(koaMiddleware(logger, {
+  includeBody: true,
+}));
+
+app.use(async (ctx) => {
+  // Request body is now available and logged
+  ctx.logger.info("Creating user", { email: ctx.request.body.email });
+  ctx.body = { success: true };
+});
+```
+
+## Custom Context
+
+Add custom data to logs via `ctx.state`:
+
+```typescript
+import jwt from "koa-jwt";
+
+// Authentication middleware
+app.use(jwt({ secret: process.env.JWT_SECRET }));
+
+// Logging middleware
+app.use(koaMiddleware(logger));
+
+// Add user to state
+app.use(async (ctx, next) => {
+  if (ctx.state.user) {
+    ctx.state.userId = ctx.state.user.id;
+    ctx.state.userEmail = ctx.state.user.email;
+  }
+  await next();
+});
+
+// Routes
+app.use(async (ctx) => {
+  // Log with user context
+  ctx.logger.info("User action", {
+    userId: ctx.state.userId,
+    action: "view_profile",
+  });
+
+  ctx.body = { user: ctx.state.user };
+});
+```
+
+## TypeScript Support
+
+Add type augmentation for TypeScript:
+
+```typescript title="src/types/koa.d.ts"
+import type { Logger } from "cenglu";
+
+declare module "koa" {
+  interface BaseContext {
+    logger: Logger;
+    correlationId: string;
+  }
+
+  interface DefaultState {
+    logger: Logger;
+    correlationId: string;
+  }
+}
+```
+
+## Complete Example
+
+```typescript
+import Koa from "koa";
+import Router from "@koa/router";
+import bodyParser from "koa-bodyparser";
+import { createLogger, koaMiddleware, koaErrorMiddleware } from "cenglu";
+
+const logger = createLogger({
+  service: "user-api",
+  env: process.env.NODE_ENV,
+  level: "info",
+  redaction: { enabled: true },
+});
+
+const app = new Koa();
+const router = new Router();
+
+// Error middleware (first)
+app.use(koaErrorMiddleware(logger, {
+  exposeErrors: process.env.NODE_ENV !== "production",
+}));
+
+// Body parser
+app.use(bodyParser());
+
+// Logging middleware
+app.use(koaMiddleware(logger, {
+  logRequests: true,
+  logResponses: true,
+  includeQuery: true,
+  ignorePaths: ["/health", "/metrics"],
+}));
+
+// Health check
+router.get("/health", (ctx) => {
+  ctx.body = { status: "ok" };
+});
+
+// Routes
+router.get("/users/:id", async (ctx) => {
+  const timer = ctx.logger.time("fetch-user");
+
+  try {
+    const user = await fetchUser(ctx.params.id);
+    timer.endWithContext({ userId: user.id });
+
+    ctx.logger.info("User fetched successfully", { userId: user.id });
+    ctx.body = user;
+  } catch (error) {
+    ctx.logger.error("Failed to fetch user", error, {
+      userId: ctx.params.id,
+    });
+    ctx.status = 404;
+    ctx.body = { error: "User not found" };
+  }
+});
+
+router.post("/users", async (ctx) => {
+  const body = ctx.request.body as { email: string; name: string };
+
+  ctx.logger.info("Creating user", { email: body.email });
+
+  try {
+    const user = await createUser(body);
+    ctx.logger.info("User created", { userId: user.id });
+
+    ctx.status = 201;
+    ctx.body = user;
+  } catch (error) {
+    ctx.logger.error("Failed to create user", error);
+    ctx.status = 500;
+    ctx.body = { error: "Failed to create user" };
+  }
+});
+
+// Register routes
+app.use(router.routes());
+app.use(router.allowedMethods());
+
+// Error event handler
+app.on("error", (err, ctx) => {
+  logger.error("Application error", err, {
+    path: ctx.path,
+    method: ctx.method,
+  });
+});
+
+// Graceful shutdown
+const closeGracefully = async (signal: string) => {
+  logger.info(`Received ${signal}, shutting down gracefully`);
+
+  // Close server
+  server.close(async () => {
+    await logger.flush();
+    await logger.close();
+
+    logger.info("Application stopped");
+    process.exit(0);
+  });
+
+  // Force exit after timeout
+  setTimeout(() => {
+    logger.error("Forced shutdown after timeout");
+    process.exit(1);
+  }, 10000);
+};
+
+process.on("SIGTERM", () => closeGracefully("SIGTERM"));
+process.on("SIGINT", () => closeGracefully("SIGINT"));
+
+// Start server
+const server = app.listen(3000, () => {
+  logger.info("Server started", {
+    port: 3000,
+    nodeVersion: process.version,
+  });
+});
+
+// Handle startup errors
+server.on("error", (error) => {
+  logger.fatal("Failed to start server", error);
+  process.exit(1);
+});
+```
+
+## Middleware Composition
+
+Combine with other Koa middleware:
+
+```typescript
+import jwt from "koa-jwt";
+import cors from "@koa/cors";
+import compress from "koa-compress";
+import ratelimit from "koa-ratelimit";
+
+// Error handler (first)
+app.use(koaErrorMiddleware(logger));
+
+// CORS
+app.use(cors());
+
+// Compression
+app.use(compress());
+
+// Rate limiting
+app.use(ratelimit({
+  driver: "memory",
+  db: new Map(),
+  duration: 60000,
+  errorMessage: "Too many requests",
+  id: (ctx) => ctx.ip,
+  max: 100,
+}));
+
+// Body parser
+app.use(bodyParser());
+
+// Logging (before authentication)
+app.use(koaMiddleware(logger));
+
+// Authentication
+app.use(jwt({ secret: process.env.JWT_SECRET }));
+
+// Routes
+app.use(router.routes());
+```
+
+## Testing
+
+Mock the logger in tests:
+
+```typescript
+import request from "supertest";
+import { createLogger } from "cenglu";
+
+describe("API Tests", () => {
+  it("should log requests", async () => {
+    const logs: any[] = [];
+
+    const testLogger = createLogger({
+      adapters: [
+        {
+          name: "test",
+          handle: (record) => logs.push(record),
+        },
+      ],
+    });
+
+    const app = createApp(testLogger);
+
+    await request(app.callback())
+      .get("/users")
+      .expect(200);
+
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        msg: expect.stringContaining("GET /users"),
+        level: "info",
+      })
+    );
+  });
+});
+```
+
+## Performance Considerations
+
+The middleware has minimal overhead:
+
+- **Logger attachment**: O(1) operation
+- **Correlation ID**: Single UUID generation
+- **Request logging**: ~0.1ms average
+- **Response logging**: ~0.1ms average
+
+For high-throughput services:
+
+```typescript
+import { samplingPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    samplingPlugin({
+      rates: { debug: 0.1 }, // Sample 10% of debug logs
+    }),
+  ],
+});
+
+app.use(koaMiddleware(logger, {
+  includeBody: false,        // Disable body logging
+  includeHeaders: false,     // Disable header logging
+  includeResponseBody: false, // Disable response body logging
+}));
+```
+
+## Next Steps
+
+- [Express Middleware](/docs/middleware/express) - Express integration
+- [Fastify Plugin](/docs/middleware/fastify) - Fastify integration
+- [Context & Bindings](/docs/features/context-bindings) - Context propagation

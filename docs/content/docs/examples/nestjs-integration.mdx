@@ -1,0 +1,533 @@
+---
+title: NestJS Integration Example
+description: Complete example of integrating cenglu with NestJS applications
+---
+
+# NestJS Integration Example
+
+Complete guide for integrating cenglu with NestJS applications using middleware and dependency injection.
+
+## Installation
+
+```bash
+npm install cenglu
+```
+
+## Basic Setup
+
+### 1. Create Logger Module
+
+```typescript title="src/logger/logger.module.ts"
+import { Module, Global } from "@nestjs/common";
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  service: "my-nestjs-app",
+  env: process.env.NODE_ENV,
+  level: (process.env.LOG_LEVEL as any) || "info",
+  redaction: {
+    enabled: true,
+  },
+});
+
+@Global()
+@Module({
+  providers: [
+    {
+      provide: "LOGGER",
+      useValue: logger,
+    },
+  ],
+  exports: ["LOGGER"],
+})
+export class LoggerModule {}
+```
+
+### 2. Import in App Module
+
+```typescript title="src/app.module.ts"
+import { Module } from "@nestjs/common";
+import { LoggerModule } from "./logger/logger.module";
+import { UserModule } from "./user/user.module";
+
+@Module({
+  imports: [
+    LoggerModule, // Import globally
+    UserModule,
+  ],
+})
+export class AppModule {}
+```
+
+### 3. Apply Middleware
+
+```typescript title="src/main.ts"
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+import { createLogger, nestjsMiddleware } from "cenglu";
+
+const logger = createLogger({
+  service: "my-app",
+  level: "info",
+});
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    logger: false, // Disable default NestJS logger
+  });
+
+  // Apply cenglu middleware
+  app.use(nestjsMiddleware(logger, {
+    ignorePaths: ["/health", /^\/api-docs/],
+  }));
+
+  await app.listen(3000);
+  logger.info("Application started", { port: 3000 });
+}
+
+bootstrap();
+```
+
+## Using Logger in Services
+
+### Inject Logger
+
+```typescript title="src/user/user.service.ts"
+import { Injectable, Inject } from "@nestjs/common";
+import type { Logger } from "cenglu";
+
+@Injectable()
+export class UserService {
+  constructor(
+    @Inject("LOGGER")
+    private readonly logger: Logger
+  ) {}
+
+  async findAll() {
+    this.logger.info("Fetching all users");
+
+    const users = await this.userRepository.find();
+
+    this.logger.info("Users fetched", { count: users.length });
+
+    return users;
+  }
+
+  async create(createUserDto: CreateUserDto) {
+    const timer = this.logger.time("create-user");
+
+    try {
+      this.logger.info("Creating user", {
+        email: createUserDto.email,
+      });
+
+      const user = await this.userRepository.save(createUserDto);
+
+      timer.endWithContext({
+        userId: user.id,
+        success: true,
+      });
+
+      return user;
+    } catch (error) {
+      this.logger.error("Failed to create user", error, {
+        email: createUserDto.email,
+      });
+
+      throw error;
+    }
+  }
+
+  async findOne(id: string) {
+    const userLogger = this.logger.child({ userId: id });
+
+    userLogger.info("Fetching user");
+
+    const user = await this.userRepository.findOne(id);
+
+    if (!user) {
+      userLogger.warn("User not found");
+      throw new NotFoundException("User not found");
+    }
+
+    userLogger.info("User fetched");
+    return user;
+  }
+}
+```
+
+### Using in Controllers
+
+```typescript title="src/user/user.controller.ts"
+import { Controller, Get, Post, Body, Param, Inject } from "@nestjs/common";
+import { UserService } from "./user.service";
+import type { Logger } from "cenglu";
+
+@Controller("users")
+export class UserController {
+  constructor(
+    private readonly userService: UserService,
+    @Inject("LOGGER")
+    private readonly logger: Logger
+  ) {}
+
+  @Get()
+  async findAll() {
+    this.logger.info("GET /users");
+    return this.userService.findAll();
+  }
+
+  @Get(":id")
+  async findOne(@Param("id") id: string) {
+    this.logger.info("GET /users/:id", { userId: id });
+    return this.userService.findOne(id);
+  }
+
+  @Post()
+  async create(@Body() createUserDto: CreateUserDto) {
+    this.logger.info("POST /users", {
+      email: createUserDto.email,
+    });
+
+    return this.userService.create(createUserDto);
+  }
+}
+```
+
+## Request-Scoped Logger
+
+Create a request-scoped logger that includes request context:
+
+### 1. Create Logger Provider
+
+```typescript title="src/logger/request-logger.provider.ts"
+import { Injectable, Scope, Inject } from "@nestjs/common";
+import { REQUEST } from "@nestjs/core";
+import type { Request } from "express";
+import type { Logger } from "cenglu";
+
+@Injectable({ scope: Scope.REQUEST })
+export class RequestLogger {
+  private readonly logger: Logger;
+
+  constructor(
+    @Inject("LOGGER")
+    private readonly baseLogger: Logger,
+    @Inject(REQUEST)
+    private readonly request: Request
+  ) {
+    // Create child logger with request context
+    this.logger = baseLogger.child({
+      requestId: (request as any).correlationId,
+      method: request.method,
+      path: request.path,
+      userId: (request as any).user?.id,
+    });
+  }
+
+  trace(msg: string, context?: any) {
+    this.logger.trace(msg, context);
+  }
+
+  debug(msg: string, context?: any) {
+    this.logger.debug(msg, context);
+  }
+
+  info(msg: string, context?: any) {
+    this.logger.info(msg, context);
+  }
+
+  warn(msg: string, context?: any) {
+    this.logger.warn(msg, context);
+  }
+
+  error(msg: string, error?: Error, context?: any) {
+    this.logger.error(msg, error, context);
+  }
+
+  fatal(msg: string, error?: Error, context?: any) {
+    this.logger.fatal(msg, error, context);
+  }
+}
+```
+
+### 2. Add to Logger Module
+
+```typescript title="src/logger/logger.module.ts"
+import { Module, Global } from "@nestjs/common";
+import { createLogger } from "cenglu";
+import { RequestLogger } from "./request-logger.provider";
+
+const logger = createLogger({
+  service: "my-nestjs-app",
+  level: "info",
+});
+
+@Global()
+@Module({
+  providers: [
+    {
+      provide: "LOGGER",
+      useValue: logger,
+    },
+    RequestLogger, // Request-scoped logger
+  ],
+  exports: ["LOGGER", RequestLogger],
+})
+export class LoggerModule {}
+```
+
+### 3. Use in Services
+
+```typescript title="src/user/user.service.ts"
+import { Injectable } from "@nestjs/common";
+import { RequestLogger } from "../logger/request-logger.provider";
+
+@Injectable()
+export class UserService {
+  constructor(
+    private readonly logger: RequestLogger // Automatically includes request context
+  ) {}
+
+  async findAll() {
+    // Logs include requestId, method, path, userId automatically
+    this.logger.info("Fetching all users");
+
+    const users = await this.userRepository.find();
+
+    this.logger.info("Users fetched", { count: users.length });
+
+    return users;
+  }
+}
+```
+
+## Exception Filter
+
+Create a global exception filter with logging:
+
+```typescript title="src/common/filters/http-exception.filter.ts"
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Inject,
+} from "@nestjs/common";
+import { Request, Response } from "express";
+import type { Logger } from "cenglu";
+
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  constructor(
+    @Inject("LOGGER")
+    private readonly logger: Logger
+  ) {}
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+
+    const status =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const message =
+      exception instanceof HttpException
+        ? exception.message
+        : "Internal server error";
+
+    // Get request-scoped context
+    const correlationId = (request as any).correlationId;
+
+    // Log error
+    const logContext = {
+      correlationId,
+      method: request.method,
+      path: request.path,
+      statusCode: status,
+      userAgent: request.headers["user-agent"],
+    };
+
+    if (status >= 500) {
+      this.logger.error("Request error", exception as Error, logContext);
+    } else {
+      this.logger.warn("Request failed", logContext);
+    }
+
+    // Send response
+    response.status(status).json({
+      statusCode: status,
+      message,
+      correlationId,
+      timestamp: new Date().toISOString(),
+      path: request.path,
+    });
+  }
+}
+```
+
+Apply filter globally:
+
+```typescript title="src/main.ts"
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Get logger from DI container
+  const logger = app.get("LOGGER");
+
+  // Apply exception filter
+  app.useGlobalFilters(new HttpExceptionFilter(logger));
+
+  await app.listen(3000);
+}
+
+bootstrap();
+```
+
+## Interceptors
+
+Create a logging interceptor:
+
+```typescript title="src/common/interceptors/logging.interceptor.ts"
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Inject,
+} from "@nestjs/common";
+import { Observable } from "rxjs";
+import { tap } from "rxjs/operators";
+import type { Logger } from "cenglu";
+
+@Injectable()
+export class LoggingInterceptor implements NestInterceptor {
+  constructor(
+    @Inject("LOGGER")
+    private readonly logger: Logger
+  ) {}
+
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest();
+    const { method, path } = request;
+    const correlationId = request.correlationId;
+
+    const timer = this.logger.time("request-handler", {
+      correlationId,
+      method,
+      path,
+    });
+
+    return next.handle().pipe(
+      tap({
+        next: () => {
+          timer.endWithContext({ success: true });
+        },
+        error: (error) => {
+          timer.endWithContext({
+            success: false,
+            error: error.message,
+          });
+        },
+      })
+    );
+  }
+}
+```
+
+Apply globally:
+
+```typescript title="src/main.ts"
+app.useGlobalInterceptors(new LoggingInterceptor(logger));
+```
+
+## Health Checks
+
+```typescript title="src/health/health.controller.ts"
+import { Controller, Get, Inject } from "@nestjs/common";
+import type { Logger } from "cenglu";
+
+@Controller("health")
+export class HealthController {
+  constructor(
+    @Inject("LOGGER")
+    private readonly logger: Logger
+  ) {}
+
+  @Get()
+  check() {
+    return {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get("ready")
+  ready() {
+    // Check dependencies
+    this.logger.debug("Readiness check");
+
+    return {
+      status: "ready",
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+```
+
+## Graceful Shutdown
+
+```typescript title="src/main.ts"
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+import { createLogger } from "cenglu";
+
+const logger = createLogger({ service: "my-app" });
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    logger: false,
+  });
+
+  // Enable graceful shutdown
+  app.enableShutdownHooks();
+
+  await app.listen(3000);
+  logger.info("Application started", { port: 3000 });
+
+  // Handle shutdown
+  process.on("SIGTERM", async () => {
+    logger.info("Received SIGTERM, shutting down gracefully");
+
+    await app.close();
+    await logger.flush();
+    await logger.close();
+
+    logger.info("Application stopped");
+    process.exit(0);
+  });
+}
+
+bootstrap().catch((error) => {
+  logger.fatal("Failed to start application", error);
+  process.exit(1);
+});
+```
+
+## Complete Example
+
+See the [examples/nestjs](https://github.com/ayungavis/cenglu/tree/main/examples/nestjs) directory for a complete working example.
+
+## Next Steps
+
+- [Express Middleware](/docs/middleware/express) - Express integration
+- [Fastify Middleware](/docs/middleware/fastify) - Fastify integration
+- [Request Context](/docs/features/context-bindings) - Context propagation

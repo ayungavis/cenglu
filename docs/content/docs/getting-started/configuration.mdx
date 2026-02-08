@@ -1,0 +1,517 @@
+---
+title: Configuration
+description: Complete guide to configuring cenglu logger
+---
+
+# Configuration
+
+## Logger Options
+
+The `createLogger` function accepts comprehensive configuration options:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  // Basic options
+  level: "info",
+  service: "my-app",
+  env: "production",
+  version: "1.0.0",
+
+  // Initial bindings
+  bindings: {
+    region: "us-east-1",
+    datacenter: "dc1",
+  },
+
+  // Output formatting
+  pretty: {
+    enabled: process.env.NODE_ENV !== "production",
+    theme: {},
+  },
+
+  structured: {
+    type: "json", // json | ecs | datadog | splunk | logfmt
+  },
+
+  // Security
+  redaction: {
+    enabled: true,
+    paths: ["password", "ssn"],
+    patterns: [
+      { pattern: /secret/gi, replacement: "[SECRET]" }
+    ],
+  },
+
+  // Performance
+  sampling: {
+    rates: { trace: 0.1, debug: 0.5 },
+    defaultRate: 1.0,
+  },
+
+  // Distributed tracing
+  correlationId: () => crypto.randomUUID(),
+  traceProvider: () => ({
+    traceId: "trace-123",
+    spanId: "span-456",
+  }),
+
+  // Advanced
+  useAsyncContext: true,
+  transports: [/* custom transports */],
+  adapters: [/* provider adapters */],
+  plugins: [/* logger plugins */],
+});
+```
+
+## Basic Configuration
+
+### Log Level
+
+Control minimum log level:
+
+```typescript
+const logger = createLogger({
+  level: "info", // trace | debug | info | warn | error | fatal
+});
+```
+
+**Environment-based levels:**
+
+```typescript
+const logger = createLogger({
+  level: (process.env.LOG_LEVEL as LogLevel) || "info",
+});
+```
+
+### Service Metadata
+
+Add service identification:
+
+```typescript
+const logger = createLogger({
+  service: "payment-service",
+  version: "2.1.0",
+  env: "production",
+});
+```
+
+### Initial Bindings
+
+Add context that appears in every log:
+
+```typescript
+const logger = createLogger({
+  bindings: {
+    hostname: os.hostname(),
+    pid: process.pid,
+    region: process.env.AWS_REGION,
+  },
+});
+
+logger.info("Server started");
+// Output includes all bindings automatically
+```
+
+## Output Formatting
+
+### Pretty Logs
+
+Human-readable, colorized output for development:
+
+```typescript
+const logger = createLogger({
+  pretty: {
+    enabled: process.env.NODE_ENV !== "production",
+    theme: {
+      // Customize colors
+      dim: (s) => `\x1b[2m${s}\x1b[0m`,
+      gray: (s) => `\x1b[90m${s}\x1b[0m`,
+      red: (s) => `\x1b[31m${s}\x1b[0m`,
+      yellow: (s) => `\x1b[33m${s}\x1b[0m`,
+      green: (s) => `\x1b[32m${s}\x1b[0m`,
+      cyan: (s) => `\x1b[36m${s}\x1b[0m`,
+      magenta: (s) => `\x1b[35m${s}\x1b[0m`,
+      bold: (s) => `\x1b[1m${s}\x1b[0m`,
+    },
+    // Custom formatter
+    formatter: (record) => {
+      return `[${record.level.toUpperCase()}] ${record.msg}`;
+    },
+  },
+});
+```
+
+**Disable colors:**
+
+```typescript
+import { NO_COLOR_THEME } from "cenglu";
+
+const logger = createLogger({
+  pretty: {
+    enabled: true,
+    theme: NO_COLOR_THEME,
+  },
+});
+```
+
+### Structured Output
+
+Production-ready structured logging:
+
+```typescript
+// JSON (default)
+const logger = createLogger({
+  structured: {
+    type: "json",
+  },
+});
+
+// ECS (Elastic Common Schema)
+const logger = createLogger({
+  structured: {
+    type: "ecs",
+  },
+});
+
+// Datadog
+const logger = createLogger({
+  structured: {
+    type: "datadog",
+  },
+});
+
+// Splunk
+const logger = createLogger({
+  structured: {
+    type: "splunk",
+  },
+});
+
+// Logfmt
+const logger = createLogger({
+  structured: {
+    type: "logfmt",
+  },
+});
+```
+
+**Transform records before formatting:**
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "json",
+    transform: (record) => ({
+      ...record,
+      // Add custom fields
+      host: os.hostname(),
+      // Rename fields
+      message: record.msg,
+      timestamp: new Date(record.time).toISOString(),
+    }),
+  },
+});
+```
+
+## Security Configuration
+
+### Redaction
+
+Protect sensitive data with built-in redaction:
+
+```typescript
+import { createLogger } from "cenglu";
+
+// Enable default redaction (passwords, API keys, credit cards, etc.)
+const logger = createLogger({
+  redaction: {
+    enabled: true,
+  },
+});
+
+// Custom paths and patterns
+const customLogger = createLogger({
+  redaction: {
+    enabled: true,
+    paths: ["password", "apiKey", "user.password"],
+    patterns: [
+      {
+        pattern: /Bearer\s+\S+/g,
+        replacement: "Bearer [REDACTED]",
+      },
+    ],
+    customRedactor: (value, key) => {
+      // Custom logic
+      return undefined;
+    },
+  },
+});
+
+// Compliance presets (PCI/GDPR/HIPAA)
+import { createPCIRedactor } from "cenglu";
+
+const pciLogger = createLogger({
+  redaction: createPCIRedactor(),
+});
+```
+
+For default patterns, compliance presets (PCI DSS, GDPR, HIPAA), pattern syntax, and advanced usage, see the [Redaction Guide](/docs/features/redaction).
+
+## Performance Configuration
+
+### Sampling
+
+Reduce log volume for high-throughput services:
+
+```typescript
+const logger = createLogger({
+  sampling: {
+    // Sample 10% of trace logs, 50% of debug logs
+    rates: {
+      trace: 0.1,
+      debug: 0.5,
+    },
+    // Default rate for levels not specified (1.0 = 100%)
+    defaultRate: 1.0,
+  },
+});
+```
+
+**Advanced sampling with plugins:**
+
+```typescript
+import { samplingPlugin, deterministicSamplingPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    // Random sampling
+    samplingPlugin({
+      rates: { trace: 0.1 },
+      defaultRate: 1.0,
+    }),
+
+    // Deterministic sampling (same inputs = same result)
+    deterministicSamplingPlugin({
+      sampleKey: (record) => record.context?.userId,
+      rate: 0.1,
+    }),
+  ],
+});
+```
+
+## Distributed Tracing
+
+### Correlation IDs
+
+Track requests across services:
+
+```typescript
+import { randomUUID } from "crypto";
+
+const logger = createLogger({
+  // Static correlation ID
+  correlationId: "fixed-id",
+
+  // Dynamic correlation ID
+  correlationId: () => randomUUID(),
+});
+```
+
+**With AsyncLocalStorage:**
+
+```typescript
+import { createRequestContext, LoggerContext } from "cenglu";
+
+const logger = createLogger({
+  useAsyncContext: true,
+});
+
+// In middleware or request handler
+app.use((req, res, next) => {
+  const context = createRequestContext({
+    id: randomUUID(),
+    method: req.method,
+    path: req.path,
+  });
+
+  LoggerContext.run(context, () => {
+    // All logs within this context include correlation ID
+    logger.info("Request received");
+    next();
+  });
+});
+```
+
+### Trace Provider
+
+Integrate with distributed tracing systems:
+
+```typescript
+import { trace } from "@opentelemetry/api";
+
+const logger = createLogger({
+  traceProvider: () => {
+    const span = trace.getActiveSpan();
+    if (!span) return undefined;
+
+    const spanContext = span.spanContext();
+    return {
+      traceId: spanContext.traceId,
+      spanId: spanContext.spanId,
+    };
+  },
+});
+
+// Logs automatically include traceId and spanId
+logger.info("Processing request");
+```
+
+## Transports
+
+### Console Transport
+
+Default transport for stdout/stderr:
+
+```typescript
+import { createConsoleTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    createConsoleTransport({
+      enabled: true,
+      stream: process.stdout,
+      errorStream: process.stderr, // Errors go here
+    }),
+  ],
+});
+```
+
+### File Transport
+
+Write logs to files with rotation:
+
+```typescript
+import { createRotatingFileTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    createRotatingFileTransport({
+      enabled: true,
+      dir: "./logs",
+      filename: ({ date, level }) =>
+        `app-${level}-${date.toISOString().split("T")[0]}.log`,
+
+      separateErrors: true, // Create separate error.log
+
+      rotation: {
+        intervalDays: 1,        // Rotate daily
+        maxBytes: 10485760,     // 10MB per file
+        maxFiles: 7,            // Keep 7 files
+        compress: "gzip",       // Compress old files
+        retentionDays: 30,      // Delete after 30 days
+      },
+    }),
+  ],
+});
+```
+
+**Environment-based configuration:**
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createRotatingFileTransport({
+      enabled: process.env.LOG_TO_FILE === "true",
+      dir: process.env.LOG_DIR || "./logs",
+      rotation: {
+        intervalDays: Number(process.env.LOG_ROTATE_DAYS) || 1,
+        maxBytes: Number(process.env.LOG_MAX_BYTES) || 10485760,
+        maxFiles: Number(process.env.LOG_MAX_FILES) || 7,
+        compress: process.env.LOG_COMPRESS === "gzip" ? "gzip" : false,
+        retentionDays: Number(process.env.LOG_RETENTION_DAYS) || 30,
+      },
+    }),
+  ],
+});
+```
+
+## Adapters
+
+Forward logs to external services:
+
+```typescript
+import { createLogger } from "cenglu";
+import { DatadogClient } from "@datadog/client";
+
+const ddClient = new DatadogClient({ apiKey: process.env.DD_API_KEY });
+
+const logger = createLogger({
+  adapters: [
+    {
+      name: "datadog",
+      level: "info", // Only forward info and above
+      handle: async (record) => {
+        await ddClient.log({
+          level: record.level,
+          message: record.msg,
+          ...record.context,
+        });
+      },
+    },
+    {
+      name: "metrics",
+      handle: (record) => {
+        if (record.level === "error") {
+          metricsClient.increment("errors", 1, {
+            service: record.service,
+          });
+        }
+      },
+    },
+  ],
+});
+```
+
+## Testing Configuration
+
+Override time and random functions for deterministic tests:
+
+```typescript
+const logger = createLogger({
+  now: () => 1704067200000, // Fixed timestamp
+  random: () => 0.5,         // Fixed random value
+});
+```
+
+**Capture logs in tests:**
+
+```typescript
+const logs: LogRecord[] = [];
+
+const logger = createLogger({
+  adapters: [
+    {
+      name: "test",
+      handle: (record) => logs.push(record),
+    },
+  ],
+});
+
+// Run tests
+logger.info("Test message");
+
+// Assert
+expect(logs).toHaveLength(1);
+expect(logs[0]).toMatchObject({
+  level: "info",
+  msg: "Test message",
+});
+```
+
+## Next Steps
+
+- [Architecture](/docs/architecture/system-design) - Understand how cenglu works
+- [Plugins](/docs/plugins/creating-plugins) - Extend logger functionality
+- [Middleware](/docs/middleware/express) - Integrate with frameworks

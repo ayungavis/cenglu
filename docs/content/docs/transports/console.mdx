@@ -1,0 +1,487 @@
+---
+title: Console Transport
+description: Write logs to stdout and stderr with console transport
+---
+
+# Console Transport
+
+The console transport writes logs to the console (stdout and stderr). It's the default transport and ideal for development, containerized applications, and cloud environments where logs are captured from standard streams.
+
+## Quick Start
+
+The console transport is enabled by default:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  service: "my-app",
+});
+
+logger.info("Hello, world!"); // Writes to stdout
+logger.error("Something failed"); // Writes to stderr
+```
+
+## Variants
+
+Cenglu provides three console transport variants:
+
+### ConsoleTransport (Default)
+
+Standard console transport with minimal overhead:
+
+```typescript
+import { createLogger, createConsoleTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    createConsoleTransport({
+      enabled: true,
+      stream: process.stdout,
+      errorStream: process.stderr,
+    }),
+  ],
+});
+```
+
+**Use when:**
+- Default behavior is sufficient
+- You need minimal overhead
+- Logs are processed by external tools (Docker, Kubernetes, log aggregators)
+
+### BufferedConsoleTransport
+
+Buffers logs in memory and flushes periodically for better performance:
+
+```typescript
+import { createLogger, createBufferedConsoleTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    createBufferedConsoleTransport({
+      enabled: true,
+      bufferSize: 100,        // Flush after 100 logs
+      flushInterval: 1000,    // Flush every 1000ms
+      flushOnExit: true,      // Flush before process exits
+    }),
+  ],
+});
+```
+
+**Use when:**
+- High-throughput logging (thousands of logs per second)
+- You want to reduce write syscalls
+- Performance is critical
+
+**Trade-offs:**
+- Logs may be delayed up to `flushInterval` ms
+- Logs buffered in memory (small footprint)
+- Automatic flush on process exit
+
+### PrettyConsoleTransport
+
+Simple pretty formatting without full logger configuration:
+
+```typescript
+import { createLogger, PrettyConsoleTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    new PrettyConsoleTransport({
+      colors: true,
+      showTimestamp: true,
+      showLevel: true,
+      timestampFormat: "local", // iso | local | relative | unix
+    }),
+  ],
+});
+```
+
+**Note:** For most cases, use `pretty.enabled = true` in logger options instead:
+
+```typescript
+const logger = createLogger({
+  pretty: {
+    enabled: process.env.NODE_ENV !== "production",
+  },
+});
+```
+
+## Configuration
+
+### Basic Options
+
+```typescript
+import { createConsoleTransport } from "cenglu";
+
+const transport = createConsoleTransport({
+  // Enable/disable the transport
+  enabled: true,
+
+  // Stdout stream (default: process.stdout)
+  stream: process.stdout,
+
+  // Stderr stream (default: process.stderr)
+  errorStream: process.stderr,
+});
+```
+
+### BufferedConsoleTransport Options
+
+```typescript
+import { createBufferedConsoleTransport } from "cenglu";
+
+const transport = createBufferedConsoleTransport({
+  // Basic options
+  enabled: true,
+  stream: process.stdout,
+  errorStream: process.stderr,
+
+  // Buffering options
+  bufferSize: 100,        // Flush after N logs
+  flushInterval: 1000,    // Flush every N milliseconds
+  flushOnExit: true,      // Flush on SIGINT/SIGTERM/exit
+});
+```
+
+### PrettyConsoleTransport Options
+
+```typescript
+import { PrettyConsoleTransport } from "cenglu";
+
+const transport = new PrettyConsoleTransport({
+  // Basic options
+  enabled: true,
+  stream: process.stdout,
+  errorStream: process.stderr,
+
+  // Pretty options
+  colors: true,                    // Enable/disable colors
+  showTimestamp: true,             // Show timestamp
+  showLevel: true,                 // Show log level
+  timestampFormat: "local",        // iso | local | relative | unix
+});
+```
+
+## Stream Behavior
+
+### Stdout vs Stderr
+
+By default, logs are routed based on level:
+
+- **Stdout**: `trace`, `debug`, `info`, `warn`
+- **Stderr**: `error`, `fatal`
+
+This follows Unix conventions and allows separating normal logs from errors:
+
+```bash
+# Capture only errors
+node app.js 2> errors.log
+
+# Capture normal logs, discard errors
+node app.js 2>/dev/null > app.log
+
+# Separate streams
+node app.js > app.log 2> errors.log
+```
+
+### Custom Stream Routing
+
+Override default streams:
+
+```typescript
+import { createWriteStream } from "fs";
+import { createConsoleTransport } from "cenglu";
+
+const transport = createConsoleTransport({
+  stream: createWriteStream("./logs/app.log"),
+  errorStream: createWriteStream("./logs/errors.log"),
+});
+```
+
+## Backpressure Handling
+
+Console transport handles backpressure gracefully:
+
+```typescript
+// The transport monitors stream buffer state
+transport.write(record, formatted, isError);
+
+// If stream buffer is full:
+// 1. ConsoleTransport: Continues writing (buffered by Node.js)
+// 2. BufferedConsoleTransport: Buffers in memory until flush
+```
+
+**Why this matters:**
+
+In high-throughput scenarios, the OS write buffer can fill up. The transport monitors this and adapts:
+
+- **No blocking**: Your application continues running
+- **Buffering**: Logs are buffered internally or by Node.js
+- **Drain events**: Transport waits for buffers to drain during flush
+
+## Performance
+
+### Benchmarks
+
+```
+ConsoleTransport (unbuffered)
+├─ Throughput: ~50,000 logs/sec
+├─ Overhead: ~0.020ms per log
+└─ Memory: Minimal
+
+BufferedConsoleTransport (100 log buffer)
+├─ Throughput: ~100,000 logs/sec
+├─ Overhead: ~0.010ms per log
+└─ Memory: ~10KB buffer
+
+PrettyConsoleTransport
+├─ Throughput: ~30,000 logs/sec
+├─ Overhead: ~0.033ms per log
+└─ Memory: Minimal
+```
+
+### Best Practices
+
+1. **Production**: Use `ConsoleTransport` with JSON formatting
+2. **Development**: Use `pretty.enabled = true` for readable logs
+3. **High-throughput**: Use `BufferedConsoleTransport` with appropriate buffer size
+4. **Docker/K8s**: Use default `ConsoleTransport` (logs captured from stdout/stderr)
+
+## Docker & Kubernetes
+
+Console transport is ideal for containerized environments:
+
+```typescript
+const logger = createLogger({
+  service: process.env.SERVICE_NAME,
+  env: process.env.NODE_ENV,
+
+  // JSON logs for log aggregators
+  structured: {
+    type: "json",
+  },
+
+  // Console transport (default)
+  transports: [
+    createConsoleTransport({
+      enabled: true,
+    }),
+  ],
+});
+```
+
+**Docker log capture:**
+
+```bash
+# View logs
+docker logs my-container
+
+# Follow logs
+docker logs -f my-container
+
+# Only errors
+docker logs my-container 2>&1 | grep '"level":"error"'
+```
+
+**Kubernetes log capture:**
+
+```bash
+# View logs
+kubectl logs pod-name
+
+# Follow logs
+kubectl logs -f pod-name
+
+# Only errors
+kubectl logs pod-name | grep '"level":"error"'
+```
+
+## Graceful Shutdown
+
+Ensure all logs are written before exit:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  service: "my-app",
+});
+
+async function shutdown() {
+  console.log("Shutting down...");
+
+  // Flush pending logs
+  await logger.flush();
+
+  // Close transports
+  await logger.close();
+
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+```
+
+## Testing
+
+### Capture Console Output
+
+```typescript
+import { createLogger, createConsoleTransport } from "cenglu";
+import { test, expect } from "vitest";
+
+test("logs to custom stream", async () => {
+  const logs: string[] = [];
+
+  const mockStream = {
+    write: (chunk: string) => {
+      logs.push(chunk);
+      return true;
+    },
+  };
+
+  const logger = createLogger({
+    transports: [
+      createConsoleTransport({
+        stream: mockStream as NodeJS.WritableStream,
+      }),
+    ],
+  });
+
+  logger.info("Test message");
+
+  await logger.flush();
+
+  expect(logs).toHaveLength(1);
+  expect(logs[0]).toContain("Test message");
+});
+```
+
+### Mock stdout/stderr
+
+```typescript
+import { createLogger } from "cenglu";
+import { test, vi } from "vitest";
+
+test("writes to stdout", () => {
+  const stdoutSpy = vi.spyOn(process.stdout, "write");
+
+  const logger = createLogger();
+  logger.info("Test message");
+
+  expect(stdoutSpy).toHaveBeenCalledWith(
+    expect.stringContaining("Test message")
+  );
+
+  stdoutSpy.mockRestore();
+});
+```
+
+## Troubleshooting
+
+### Logs Not Appearing
+
+**Problem:** Logs don't show up in console
+
+**Solutions:**
+
+1. Check log level:
+   ```typescript
+   logger.setLevel("trace"); // Enable all levels
+   ```
+
+2. Check transport is enabled:
+   ```typescript
+   const logger = createLogger({
+     transports: [
+       createConsoleTransport({ enabled: true }),
+     ],
+   });
+   ```
+
+3. Ensure flush before exit:
+   ```typescript
+   await logger.flush();
+   ```
+
+### Buffered Logs Delayed
+
+**Problem:** Logs appear in batches with `BufferedConsoleTransport`
+
+**Solutions:**
+
+1. Reduce flush interval:
+   ```typescript
+   createBufferedConsoleTransport({
+     flushInterval: 100, // Flush every 100ms
+   });
+   ```
+
+2. Reduce buffer size:
+   ```typescript
+   createBufferedConsoleTransport({
+     bufferSize: 10, // Flush after 10 logs
+   });
+   ```
+
+3. Use unbuffered transport:
+   ```typescript
+   createConsoleTransport(); // No buffering
+   ```
+
+### Colors Not Working
+
+**Problem:** ANSI color codes in output but no colors
+
+**Solutions:**
+
+1. Enable TTY:
+   ```bash
+   # Force color support
+   FORCE_COLOR=1 node app.js
+   ```
+
+2. Check terminal support:
+   ```typescript
+   console.log(process.stdout.isTTY); // Should be true
+   ```
+
+3. Use pretty formatting:
+   ```typescript
+   const logger = createLogger({
+     pretty: { enabled: true },
+   });
+   ```
+
+## Environment Variables
+
+```bash
+# Disable colors
+NO_COLOR=1 node app.js
+
+# Force colors
+FORCE_COLOR=1 node app.js
+
+# Custom log level
+LOG_LEVEL=debug node app.js
+```
+
+## Comparison with Other Transports
+
+| Feature | Console | File | Custom |
+|---------|---------|------|--------|
+| Overhead | Minimal | Low | Varies |
+| Persistence | ❌ | ✅ | Depends |
+| Rotation | ❌ | ✅ | Depends |
+| Searchability | ⚠️ | ✅ | Depends |
+| Docker-friendly | ✅ | ⚠️ | Depends |
+| Local development | ✅ | ⚠️ | Depends |
+
+## Next Steps
+
+- [File Transport](/docs/transports/file) - Persistent logs with rotation
+- [Custom Transports](/docs/transports/custom) - Implement your own transport
+- [Pretty Formatting](/docs/features/formatting) - Readable development logs
+- [Configuration](/docs/getting-started/configuration) - Transport configuration options

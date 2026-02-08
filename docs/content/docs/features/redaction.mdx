@@ -1,0 +1,517 @@
+---
+title: Redaction
+description: Protect sensitive data with built-in redaction capabilities
+---
+
+# Redaction
+
+Cenglu provides powerful, built-in redaction to automatically detect and mask sensitive information in your logs.
+
+## Why Redaction Matters
+
+Logging sensitive data can lead to:
+
+- **Security breaches**: Exposed credentials, API keys, tokens
+- **Compliance violations**: PCI DSS, GDPR, HIPAA, SOC 2
+- **Data leaks**: Personal information, financial data, health records
+- **Incident response**: Compromised logs require immediate rotation of secrets
+
+## Quick Start
+
+Enable basic redaction:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  redaction: {
+    enabled: true,
+  },
+});
+
+logger.info("User registered", {
+  email: "john@example.com",
+  password: "super-secret",        // -> [REDACTED]
+  creditCard: "4242-4242-4242-4242", // -> [REDACTED]
+  apiKey: "sk_live_abc123",         // -> [REDACTED]
+});
+```
+
+Output:
+```json
+{
+  "level": "info",
+  "msg": "User registered",
+  "context": {
+    "email": "john@example.com",
+    "password": "[REDACTED]",
+    "creditCard": "[REDACTED]",
+    "apiKey": "[REDACTED]"
+  }
+}
+```
+
+## Default Patterns
+
+When `enabled: true` with `useDefaults: true` (default), cenglu automatically redacts:
+
+### Credentials
+- `password`, `passwd`, `pwd`
+- `secret`, `secretKey`
+- `apiKey`, `api_key`
+- `accessToken`, `access_token`
+- `authToken`, `auth_token`
+- `privateKey`, `private_key`
+
+### Financial Data
+- Credit card numbers (Visa, Mastercard, Amex, Discover)
+- CVV codes
+- Bank account numbers
+
+### Personal Information
+- Email addresses
+- Social Security Numbers (SSN)
+- Phone numbers
+
+### API Tokens
+- Bearer tokens
+- JWT tokens
+- AWS access keys
+- GitHub tokens
+- Stripe keys
+
+## Path-Based Redaction
+
+Redact specific object paths:
+
+```typescript
+const logger = createLogger({
+  redaction: {
+    enabled: true,
+    paths: [
+      "password",
+      "user.password",
+      "creditCard",
+      "payment.cvv",
+      "config.database.password",
+    ],
+  },
+});
+
+logger.info("Payment processed", {
+  user: {
+    name: "John",
+    password: "secret123", // -> [REDACTED]
+  },
+  payment: {
+    amount: 100,
+    cvv: "123", // -> [REDACTED]
+  },
+});
+```
+
+**Path syntax:**
+- `password` - Redacts all keys named "password"
+- `user.password` - Redacts nested path
+- Supports nested objects and arrays
+
+## Pattern-Based Redaction
+
+Use regex patterns for flexible redaction:
+
+```typescript
+const logger = createLogger({
+  redaction: {
+    enabled: true,
+    patterns: [
+      {
+        name: "bearer-token",
+        pattern: /Bearer\s+[A-Za-z0-9\-._~+/]+=*/g,
+        replacement: "Bearer [REDACTED]",
+      },
+      {
+        name: "email",
+        pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+        replacement: "[EMAIL]",
+      },
+      {
+        name: "phone",
+        pattern: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
+        replacement: "[PHONE]",
+      },
+      {
+        name: "ip-address",
+        pattern: /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g,
+        replacement: "[IP]",
+      },
+    ],
+  },
+});
+
+logger.info("Request received", {
+  authorization: "Bearer sk_live_abcdef123456", // -> "Bearer [REDACTED]"
+  from: "john@example.com",                      // -> "[EMAIL]"
+  phone: "555-123-4567",                         // -> "[PHONE]"
+  ip: "192.168.1.1",                             // -> "[IP]"
+});
+```
+
+## Custom Redactor Function
+
+Implement custom redaction logic:
+
+```typescript
+const logger = createLogger({
+  redaction: {
+    enabled: true,
+    customRedactor: (value, key) => {
+      // Redact values longer than 100 characters
+      if (typeof value === "string" && value.length > 100) {
+        return `[LONG_STRING:${value.length}]`;
+      }
+
+      // Redact specific keys
+      if (key === "sensitiveData") {
+        return "[SENSITIVE]";
+      }
+
+      // Partial redaction for emails
+      if (key === "email" && typeof value === "string") {
+        const [local, domain] = value.split("@");
+        return `${local.slice(0, 2)}***@${domain}`;
+      }
+
+      // Return undefined to skip custom redaction
+      return undefined;
+    },
+  },
+});
+
+logger.info("User data", {
+  email: "john.doe@example.com",    // -> "jo***@example.com"
+  sensitiveData: "secret",          // -> "[SENSITIVE]"
+  longText: "a".repeat(200),        // -> "[LONG_STRING:200]"
+});
+```
+
+## Compliance Presets
+
+### PCI DSS Compliance
+
+For payment card industry compliance:
+
+```typescript
+import { createLogger, createPCIRedactor } from "cenglu";
+
+const logger = createLogger({
+  redaction: createPCIRedactor(),
+});
+
+logger.info("Payment processed", {
+  cardNumber: "4242424242424242",  // -> [REDACTED]
+  cvv: "123",                      // -> [REDACTED]
+  expiryDate: "12/25",             // Logged (not PII)
+  amount: 99.99,                   // Logged (not PII)
+});
+```
+
+**PCI Redactor includes:**
+- Credit card numbers (all major brands)
+- CVV/CVC codes
+- Card security codes
+- Track data
+
+### GDPR Compliance
+
+For EU data protection compliance:
+
+```typescript
+import { createLogger, createGDPRRedactor } from "cenglu";
+
+const logger = createLogger({
+  redaction: createGDPRRedactor(),
+});
+
+logger.info("User updated", {
+  email: "john@example.com",    // -> [REDACTED]
+  name: "John Doe",             // -> [REDACTED]
+  address: "123 Main St",       // -> [REDACTED]
+  userId: "user-123",           // Logged (identifier, not PII)
+});
+```
+
+**GDPR Redactor includes:**
+- Email addresses
+- Names
+- Addresses
+- Phone numbers
+- IP addresses
+- Geolocation data
+
+### HIPAA Compliance
+
+For healthcare data protection:
+
+```typescript
+import { createLogger, createHIPAARedactor } from "cenglu";
+
+const logger = createLogger({
+  redaction: createHIPAARedactor(),
+});
+
+logger.info("Patient record accessed", {
+  ssn: "123-45-6789",           // -> [REDACTED]
+  medicalRecordNumber: "MRN123", // -> [REDACTED]
+  email: "patient@example.com",  // -> [REDACTED]
+  patientId: "patient-123",      // Logged (de-identified)
+});
+```
+
+**HIPAA Redactor includes:**
+- Social Security Numbers
+- Medical record numbers
+- Health plan numbers
+- Email addresses
+- Phone numbers
+- Full names
+- Addresses
+
+## Combining Redaction Configs
+
+Merge multiple redaction configurations:
+
+```typescript
+import {
+  createLogger,
+  createPCIRedactor,
+  mergeRedactionOptions,
+} from "cenglu";
+
+const customRedaction = {
+  paths: ["internalId", "sessionToken"],
+  patterns: [
+    {
+      pattern: /internal-[0-9]+/g,
+      replacement: "[INTERNAL_ID]",
+    },
+  ],
+};
+
+const logger = createLogger({
+  redaction: mergeRedactionOptions(
+    createPCIRedactor(),
+    customRedaction
+  ),
+});
+```
+
+## Message Redaction
+
+Redaction applies to log messages, not just context:
+
+```typescript
+const logger = createLogger({
+  redaction: {
+    enabled: true,
+    patterns: [
+      {
+        pattern: /password=\S+/g,
+        replacement: "password=[REDACTED]",
+      },
+    ],
+  },
+});
+
+logger.info(
+  "Login failed: password=secret123 for user=john"
+);
+// Output: "Login failed: password=[REDACTED] for user=john"
+```
+
+## Error Redaction
+
+Redaction applies to error messages and stack traces:
+
+```typescript
+const logger = createLogger({
+  redaction: {
+    enabled: true,
+  },
+});
+
+try {
+  throw new Error("API key sk_live_abc123 is invalid");
+} catch (error) {
+  logger.error("Authentication failed", error);
+  // Error message: "API key [REDACTED] is invalid"
+}
+```
+
+## Standalone Redactor
+
+Use redaction outside of logging:
+
+```typescript
+import { createRedactor } from "cenglu";
+
+const redactor = createRedactor({
+  paths: ["password", "apiKey"],
+  patterns: [
+    {
+      pattern: /Bearer\s+\S+/g,
+      replacement: "Bearer [REDACTED]",
+    },
+  ],
+});
+
+const data = {
+  username: "john",
+  password: "secret123",
+  apiKey: "sk_live_abc",
+  authorization: "Bearer token123",
+};
+
+const redacted = redactor.redact(data);
+console.log(redacted);
+// {
+//   username: "john",
+//   password: "[REDACTED]",
+//   apiKey: "[REDACTED]",
+//   authorization: "Bearer [REDACTED]"
+// }
+```
+
+### String Redaction
+
+Redact strings directly:
+
+```typescript
+import { redactString } from "cenglu";
+
+const text = "Password: secret123, API Key: sk_live_abc";
+const redacted = redactString(text, [
+  {
+    pattern: /Password:\s*\S+/g,
+    replacement: "Password: [REDACTED]",
+  },
+  {
+    pattern: /API Key:\s*\S+/g,
+    replacement: "API Key: [REDACTED]",
+  },
+]);
+
+console.log(redacted);
+// "Password: [REDACTED], API Key: [REDACTED]"
+```
+
+## Performance Considerations
+
+Redaction has minimal performance impact when designed properly:
+
+**Fast paths:**
+- Disabled redaction: No overhead
+- Path-based redaction: O(1) lookups
+- Pattern matching: Lazy evaluation
+
+**Best practices:**
+1. Use path-based redaction when possible (faster than patterns)
+2. Compile patterns outside of redactor creation
+3. Keep pattern count reasonable (< 20)
+4. Use specific patterns (avoid `.*`)
+
+**Benchmarks:**
+```
+No redaction:           0.003ms per log
+Path redaction:         0.004ms per log (+33%)
+Pattern redaction (5):  0.006ms per log (+100%)
+Pattern redaction (20): 0.012ms per log (+300%)
+```
+
+## Testing Redaction
+
+Verify redaction works correctly:
+
+```typescript
+import { createLogger } from "cenglu";
+import { expect, test } from "vitest";
+
+test("redacts passwords", () => {
+  const logs: any[] = [];
+
+  const logger = createLogger({
+    redaction: { enabled: true },
+    adapters: [
+      {
+        name: "test",
+        handle: (record) => logs.push(record),
+      },
+    ],
+  });
+
+  logger.info("User created", {
+    username: "john",
+    password: "secret123",
+  });
+
+  expect(logs[0].context.password).toBe("[REDACTED]");
+  expect(logs[0].context.username).toBe("john");
+});
+```
+
+## Troubleshooting
+
+### Pattern Not Matching
+
+```typescript
+// Bad: Patterns must be global (/g flag)
+{
+  pattern: /Bearer\s+\S+/,
+  replacement: "Bearer [REDACTED]",
+}
+
+// Good: Use /g flag
+{
+  pattern: /Bearer\s+\S+/g,
+  replacement: "Bearer [REDACTED]",
+}
+```
+
+### Path Not Working
+
+```typescript
+// Paths are case-sensitive
+paths: ["Password"] // Won't match "password"
+paths: ["password"] // Matches "password"
+
+// Use both if needed
+paths: ["password", "Password", "PASSWORD"]
+```
+
+### Custom Redactor Not Applied
+
+```typescript
+// Must return undefined to skip
+customRedactor: (value, key) => {
+  if (shouldRedact(value)) {
+    return "[REDACTED]";
+  }
+  // IMPORTANT: Return undefined, not the original value
+  return undefined;
+}
+```
+
+## Security Best Practices
+
+1. **Enable in all environments**: Don't disable redaction in dev/staging
+2. **Use compliance presets**: Start with PCI/GDPR/HIPAA redactors
+3. **Review logs regularly**: Audit for missed sensitive data
+4. **Test redaction**: Write tests to verify sensitive data is masked
+5. **Use secure defaults**: Keep `useDefaults: true`
+6. **Combine strategies**: Use paths + patterns + custom redactor
+7. **Rotate on exposure**: If secrets are logged, rotate immediately
+
+## Next Steps
+
+- [Sampling](/docs/features/sampling) - Reduce log volume
+- [File Rotation](/docs/features/file-rotation) - Secure log storage
+- [Security Guide](/docs/development/security) - Comprehensive security practices

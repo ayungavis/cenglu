@@ -1,0 +1,524 @@
+---
+title: Fastify Plugin
+description: Integrate cenglu with Fastify applications
+---
+
+# Fastify Plugin
+
+Cenglu provides a native Fastify plugin for seamless request logging, correlation ID tracking, and context propagation.
+
+## Installation
+
+```typescript
+import Fastify from "fastify";
+import { createLogger, fastifyPlugin } from "cenglu";
+```
+
+## Basic Usage
+
+```typescript
+import Fastify from "fastify";
+import { createLogger, fastifyPlugin } from "cenglu";
+
+const fastify = Fastify();
+const logger = createLogger({ service: "api" });
+
+// Register plugin
+await fastify.register(fastifyPlugin, {
+  logger,
+  ignorePaths: ["/health"],
+});
+
+fastify.get("/users/:id", async (request, reply) => {
+  // Logger is automatically attached with request context
+  request.logger.info("Fetching user", { userId: request.params.id });
+
+  return { id: request.params.id, name: "John Doe" };
+});
+
+await fastify.listen({ port: 3000 });
+```
+
+## Automatic Features
+
+The plugin automatically:
+
+- ✅ Generates or extracts correlation IDs
+- ✅ Logs incoming requests
+- ✅ Logs outgoing responses with duration
+- ✅ Attaches logger to `request.logger`
+- ✅ Attaches correlation ID to `request.correlationId`
+- ✅ Sets correlation ID response header
+- ✅ Uses AsyncLocalStorage for context propagation
+- ✅ Handles errors with proper logging
+
+## Configuration Options
+
+```typescript
+await fastify.register(fastifyPlugin, {
+  // Required: Logger instance
+  logger: createLogger({ service: "api" }),
+
+  // Logging control
+  logRequests: true,         // Log incoming requests
+  logResponses: true,        // Log outgoing responses
+
+  // Data inclusion
+  includeHeaders: false,     // Include request headers (may contain sensitive data)
+  includeQuery: true,        // Include query parameters
+  includeBody: false,        // Include request body
+
+  // Correlation ID
+  correlationIdHeader: "x-correlation-id",
+  generateCorrelationId: () => crypto.randomUUID(),
+
+  // Path filtering
+  ignorePaths: ["/health", "/metrics", /^\/internal/],
+  skip: (request, reply) => request.method === "OPTIONS",
+
+  // Security
+  redactHeaders: ["authorization", "cookie", "set-cookie"],
+
+  // Advanced
+  useAsyncContext: true,
+
+  // Custom messages
+  requestMessage: (request) => `${request.method} ${request.routerPath}`,
+  responseMessage: (request, reply, duration) =>
+    `${request.method} ${request.routerPath} ${reply.statusCode} ${duration}ms`,
+});
+```
+
+## Request Logging
+
+### Default Request Log
+
+```json
+{
+  "level": "info",
+  "msg": "GET /users/123",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "context": {
+    "url": "/users/123?includeDetails=true",
+    "query": { "includeDetails": "true" },
+    "params": { "id": "123" }
+  }
+}
+```
+
+### With Headers
+
+```typescript
+await fastify.register(fastifyPlugin, {
+  logger,
+  includeHeaders: true,
+  redactHeaders: ["authorization", "cookie"],
+});
+```
+
+## Response Logging
+
+### Default Response Log
+
+```json
+{
+  "level": "info",
+  "msg": "GET /users/123 200 42ms",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "context": {
+    "statusCode": 200,
+    "duration": 42
+  }
+}
+```
+
+### Log Levels by Status Code
+
+- `200-399` → `info`
+- `400-499` → `warn`
+- `500-599` → `error`
+
+## Correlation IDs
+
+### Automatic Generation
+
+```typescript
+await fastify.register(fastifyPlugin, {
+  logger,
+  correlationIdHeader: "x-correlation-id",
+  generateCorrelationId: () => crypto.randomUUID(),
+});
+
+fastify.get("/users", async (request, reply) => {
+  console.log(request.correlationId); // "550e8400-e29b-41d4-a716-446655440000"
+
+  // All logs include correlation ID
+  request.logger.info("Processing request");
+
+  return { users: [] };
+});
+```
+
+### Extract from Request ID
+
+Fastify's built-in `request.id` is used as fallback:
+
+```typescript
+await fastify.register(fastifyPlugin, {
+  logger,
+});
+
+// If no x-correlation-id header, falls back to request.id
+```
+
+### Propagate to Downstream Services
+
+```typescript
+fastify.get("/users", async (request, reply) => {
+  const response = await fetch("https://api.example.com/users", {
+    headers: {
+      "x-correlation-id": request.correlationId, // Propagate
+    },
+  });
+
+  request.logger.info("Fetched users", {
+    count: response.data.length,
+  });
+
+  return response.data;
+});
+```
+
+## Path Filtering
+
+### Ignore Specific Paths
+
+```typescript
+await fastify.register(fastifyPlugin, {
+  logger,
+  ignorePaths: [
+    "/health",           // Exact match
+    "/metrics",          // Exact match
+    /^\/internal\//,     // Regex pattern
+  ],
+});
+```
+
+### Custom Skip Logic
+
+```typescript
+await fastify.register(fastifyPlugin, {
+  logger,
+  skip: (request, reply) => {
+    // Skip OPTIONS requests
+    if (request.method === "OPTIONS") return true;
+
+    // Skip based on header
+    if (request.headers["x-skip-logging"]) return true;
+
+    return false;
+  },
+});
+```
+
+## Error Handling
+
+The plugin automatically hooks into Fastify's error handling:
+
+```typescript
+fastify.get("/error", async (request, reply) => {
+  throw new Error("Something went wrong");
+});
+
+// Error is automatically logged with:
+// - Error message and stack trace
+// - Status code
+// - Request context
+```
+
+### Custom Error Handler
+
+```typescript
+fastify.setErrorHandler((error, request, reply) => {
+  // request.logger is available here
+  request.logger.error("Custom error handler", error, {
+    customData: "value",
+  });
+
+  reply.status(500).send({
+    error: error.message,
+    correlationId: request.correlationId,
+  });
+});
+```
+
+## Hooks Integration
+
+The plugin uses Fastify hooks:
+
+- **onRequest**: Sets up logger, correlation ID, and logs request
+- **onResponse**: Logs response with duration
+- **onError**: Logs errors
+
+You can add additional hooks:
+
+```typescript
+fastify.addHook("preHandler", async (request, reply) => {
+  // request.logger is available
+  request.logger.debug("Pre-handler hook", {
+    user: request.user?.id,
+  });
+});
+```
+
+## AsyncLocalStorage Context
+
+Enable context propagation across async operations:
+
+```typescript
+await fastify.register(fastifyPlugin, {
+  logger,
+  useAsyncContext: true, // Default: true
+});
+
+fastify.get("/users", async (request, reply) => {
+  // Context is preserved across awaits
+  await someAsyncOperation();
+
+  // These logs still have request context
+  request.logger.info("Operation completed");
+
+  return { users: [] };
+});
+
+async function someAsyncOperation() {
+  // Can access context from anywhere in the call stack
+  const context = LoggerContext.get();
+  console.log(context?.correlationId);
+}
+```
+
+## TypeScript Support
+
+Add type augmentation for TypeScript:
+
+```typescript title="src/types/fastify.d.ts"
+import type { Logger } from "cenglu";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    logger: Logger;
+    correlationId: string;
+  }
+}
+```
+
+## Complete Example
+
+```typescript
+import Fastify from "fastify";
+import { createLogger, fastifyPlugin } from "cenglu";
+
+const logger = createLogger({
+  service: "user-api",
+  env: process.env.NODE_ENV,
+  level: "info",
+  redaction: { enabled: true },
+});
+
+const fastify = Fastify({
+  logger: false, // Disable default Fastify logger
+  requestIdHeader: "x-request-id",
+  genReqId: () => crypto.randomUUID(),
+});
+
+// Register cenglu plugin
+await fastify.register(fastifyPlugin, {
+  logger,
+  logRequests: true,
+  logResponses: true,
+  includeQuery: true,
+  ignorePaths: ["/health", "/metrics"],
+});
+
+// Health check
+fastify.get("/health", async (request, reply) => {
+  return { status: "ok" };
+});
+
+// Routes
+fastify.get("/users/:id", async (request, reply) => {
+  const timer = request.logger.time("fetch-user");
+
+  try {
+    const user = await fetchUser(request.params.id);
+    timer.endWithContext({ userId: user.id });
+
+    request.logger.info("User fetched successfully", { userId: user.id });
+    return user;
+  } catch (error) {
+    request.logger.error("Failed to fetch user", error, {
+      userId: request.params.id,
+    });
+    reply.code(404);
+    return { error: "User not found" };
+  }
+});
+
+fastify.post("/users", async (request, reply) => {
+  const body = request.body as { email: string; name: string };
+
+  request.logger.info("Creating user", { email: body.email });
+
+  try {
+    const user = await createUser(body);
+    request.logger.info("User created", { userId: user.id });
+
+    reply.code(201);
+    return user;
+  } catch (error) {
+    request.logger.error("Failed to create user", error);
+    reply.code(500);
+    return { error: "Failed to create user" };
+  }
+});
+
+// Error handler
+fastify.setErrorHandler((error, request, reply) => {
+  request.logger.error("Unhandled error", error);
+
+  reply.status(500).send({
+    error: "Internal Server Error",
+    correlationId: request.correlationId,
+  });
+});
+
+// Graceful shutdown
+const closeGracefully = async (signal: string) => {
+  logger.info(`Received ${signal}, shutting down gracefully`);
+
+  await fastify.close();
+  await logger.flush();
+  await logger.close();
+
+  logger.info("Application stopped");
+  process.exit(0);
+};
+
+process.on("SIGTERM", () => closeGracefully("SIGTERM"));
+process.on("SIGINT", () => closeGracefully("SIGINT"));
+
+// Start server
+try {
+  await fastify.listen({ port: 3000, host: "0.0.0.0" });
+  logger.info("Server started", {
+    port: 3000,
+    nodeVersion: process.version,
+  });
+} catch (error) {
+  logger.fatal("Failed to start server", error);
+  process.exit(1);
+}
+```
+
+## Plugin Composition
+
+Combine with other Fastify plugins:
+
+```typescript
+import fastifyAuth from "@fastify/auth";
+import fastifyJwt from "@fastify/jwt";
+
+// Register cenglu first
+await fastify.register(fastifyPlugin, { logger });
+
+// Then register other plugins
+await fastify.register(fastifyJwt, { secret: process.env.JWT_SECRET });
+await fastify.register(fastifyAuth);
+
+// Use in routes
+fastify.route({
+  method: "GET",
+  url: "/protected",
+  preHandler: fastify.auth([fastify.verifyJWT]),
+  handler: async (request, reply) => {
+    request.logger.info("Accessing protected route", {
+      userId: request.user.id,
+    });
+    return { message: "Protected data" };
+  },
+});
+```
+
+## Testing
+
+Mock the logger in tests:
+
+```typescript
+import { test } from "tap";
+import { build } from "./app"; // Your app builder
+
+test("GET /users returns users", async (t) => {
+  const logs: any[] = [];
+
+  const app = await build({
+    logger: createLogger({
+      adapters: [
+        {
+          name: "test",
+          handle: (record) => logs.push(record),
+        },
+      ],
+    }),
+  });
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/users",
+  });
+
+  t.equal(response.statusCode, 200);
+  t.ok(logs.some((log) => log.msg.includes("GET /users")));
+
+  await app.close();
+});
+```
+
+## Performance Considerations
+
+The plugin has minimal overhead:
+
+- **Logger attachment**: O(1) operation
+- **Correlation ID**: Single UUID generation
+- **Request logging**: ~0.1ms average
+- **Response logging**: ~0.1ms average
+
+For high-throughput services:
+
+```typescript
+import { samplingPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    samplingPlugin({
+      rates: { debug: 0.1 }, // Sample 10% of debug logs
+    }),
+  ],
+});
+
+await fastify.register(fastifyPlugin, {
+  logger,
+  includeBody: false,      // Disable body logging
+  includeHeaders: false,   // Disable header logging
+});
+```
+
+## Next Steps
+
+- [Koa Middleware](/docs/middleware/koa) - Koa integration
+- [NestJS Integration](/docs/examples/nestjs-integration) - NestJS example
+- [Context & Bindings](/docs/features/context-bindings) - Context propagation

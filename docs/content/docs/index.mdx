@@ -1,0 +1,184 @@
+---
+title: Overview
+description: Fast, zero-dependencies, secure logger for Node.js that doesn't suck. Built for production, not resumes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { APP_CONSTANT } from "@/constants/app.constant";
+import { capitalizeFirstLetter } from "@/utils/capitalize-first-letter"
+import { lowercaseFirstLetter } from "@/utils/lowercase-first-letter"
+
+# {capitalizeFirstLetter(APP_CONSTANT.APP_NAME)}
+
+<div className="text-xl text-muted-foreground">
+  {APP_CONSTANT.APP_NAME} is a {lowercaseFirstLetter(APP_CONSTANT.APP_DESCRIPTION)}
+</div>
+
+## Why Cenglu?
+
+Cenglu is a production-ready logging library designed for modern Node.js applications with a focus on:
+
+- **Performance** - Optimized for high throughput with minimal overhead
+- **Security** - Built-in redaction for sensitive data (PII, credentials, API keys)
+- **Zero Dependencies** - No external dependencies, small bundle size (< 500KB)
+- **Type-Safe** - Written in TypeScript with comprehensive type definitions
+- **Extensible** - Plugin system for custom behaviors
+- **Framework-Ready** - Middleware for Express, NestJS, Fastify, and Koa
+- **Production-Ready** - File rotation, batching, correlation IDs, distributed tracing
+
+## Quick Start
+
+Install Cenglu using your preferred package manager:
+
+```package-install
+cenglu
+```
+
+Get started quickly with a basic logger:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  service: "my-app",
+  level: "info",
+});
+
+logger.info("Application started", { port: 3000 });
+```
+
+For detailed installation instructions, TypeScript configuration, and import paths, see [Installation Guide](/docs/getting-started/installation).
+
+### With Express
+
+```typescript
+import express from "express";
+import { createLogger, expressMiddleware } from "cenglu";
+
+const app = express();
+const logger = createLogger({ service: "api" });
+
+app.use(expressMiddleware(logger));
+
+app.get("/users/:id", (req, res) => {
+  // Logger is automatically attached with request context
+  req.logger.info("Fetching user", { userId: req.params.id });
+  res.json({ id: req.params.id });
+});
+```
+
+## Key Features
+
+### Security-First Redaction
+
+Automatically redact sensitive information like passwords, API keys, credit cards, and PII:
+
+```typescript
+const logger = createLogger({
+  redaction: { enabled: true },
+});
+
+logger.info("User registered", {
+  password: "super-secret", // -> [REDACTED]
+  apiKey: "sk_live_abc123", // -> [REDACTED]
+});
+```
+
+Learn about patterns, compliance presets (PCI/GDPR/HIPAA), and advanced configuration in the [Redaction Guide](/docs/features/redaction).
+
+### Child Loggers & Context Binding
+
+```typescript
+// Child logger (shares transports/config)
+const requestLogger = logger.child({ requestId: "abc-123" });
+requestLogger.info("Processing request");
+
+// Lightweight bound logger (temporary bindings)
+logger.with({ userId: 123 }).info("User action", { action: "login" });
+```
+
+### Performance Timing
+
+```typescript
+const done = logger.time("database-query");
+await db.query("SELECT * FROM users");
+done(); // Logs: "database-query completed" { durationMs: 42 }
+
+// With additional context
+done.endWithContext({ rowCount: 10 });
+
+// Get elapsed time without logging
+const ms = done.elapsed();
+```
+
+### Pretty Logs for Development
+
+```typescript
+const logger = createLogger({
+  pretty: {
+    enabled: process.env.NODE_ENV !== "production"
+  },
+});
+
+// Outputs colored, formatted logs in dev; JSON in production
+```
+
+### Multiple Output Formats
+
+```typescript
+const logger = createLogger({
+  structured: {
+    type: "ecs", // json | ecs | datadog | splunk | logfmt
+  },
+});
+```
+
+Support for Elasticsearch (ECS), Datadog, Splunk, and logfmt formats. See the [Formatters Guide](/docs/features/formatters) for details.
+
+### Testing Utilities
+
+Built-in testing utilities make it easy to test code that uses the logger:
+
+```typescript
+import { createTestLogger } from "cenglu/testing";
+
+describe("UserService", () => {
+  it("logs user creation", () => {
+    const { logger, transport } = createTestLogger();
+
+    service.createUser({ email: "test@example.com" });
+
+    expect(transport.hasLog("info", "User created")).toBe(true);
+    expect(transport.last()?.context?.email).toBe("test@example.com");
+  });
+});
+```
+
+Includes mock time control, deterministic sampling, custom matchers for Vitest/Jest, and assertion helpers. See the [Testing Guide](/docs/development/testing) for comprehensive examples.
+
+## Comparison with Other Loggers
+
+| Feature | Cenglu | Pino | Winston | Bunyan |
+|---------|--------|------|---------|--------|
+| **Zero Dependencies** | ✅ | ❌ (~5 deps) | ❌ (~15 deps) | ❌ (~10 deps) |
+| **Bundle Size** | < 500KB | ~100KB | ~1MB | ~500KB |
+| **TypeScript First** | ✅ Full | ⚠️ Partial | ⚠️ Partial | ❌ |
+| **Built-in Redaction** | ✅ | ❌ | ❌ | ❌ |
+| **AsyncLocalStorage** | ✅ | ❌ | ❌ | ❌ |
+| **Plugin System** | ✅ Hooks | ⚠️ Limited | ⚠️ Limited | ❌ |
+| **Middleware** | ✅ 4 frameworks | ⚠️ Express only | ❌ | ❌ |
+| **Pretty Logs** | ✅ Built-in | ⚠️ Requires pino-pretty | ✅ | ⚠️ Limited |
+| **Sampling** | ✅ Built-in | ❌ | ❌ | ❌ |
+| **Format Support** | 5 formats | 1 (JSON) | 3 formats | 1 (JSON) |
+| **File Rotation** | ✅ Built-in | ⚠️ Requires pino-roll | ⚠️ Requires extra package | ❌ |
+| **Performance** | ⚡ Fast | ⚡⚡ Fastest | ⚠️ Slower | ⚡ Fast |
+
+## Community & Support
+
+- **GitHub**: [ayungavis/cenglu](https://github.com/ayungavis/cenglu)
+- **Issues**: [Report bugs](https://github.com/ayungavis/cenglu/issues)
+- **NPM**: [cenglu](https://www.npmjs.com/package/cenglu)
+
+## License
+
+MIT © [Wahyu Kurniawan](https://github.com/ayungavis)

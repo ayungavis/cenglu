@@ -1,0 +1,870 @@
+---
+title: Plugin System
+description: Extend Cenglu with custom plugins - lifecycle, hooks, and practical examples
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Mermaid } from "@/components/mdx/mermaid";
+
+# Plugin System
+
+Plugins are the primary way to extend Cenglu without modifying core code. They let you transform logs, filter records, add enrichment, batch outputs, and integrate with external services.
+
+<Callout type="info">
+**Quick Start**: Plugins implement hook functions that run at specific points in the logging pipeline.
+</Callout>
+
+## Why Use Plugins?
+
+Common use cases:
+
+- **Filter/Sample** - Drop debug logs in production, sample high-volume traces
+- **Redact** - Remove sensitive data (PII, credentials) before logging
+- **Enrich** - Add hostname, process info, user context to every log
+- **Batch** - Buffer logs and send in batches to reduce network overhead
+- **Metrics** - Count logs by level, track error rates, monitor performance
+- **Forward** - Send logs to external systems (Datadog, Splunk, custom APIs)
+
+## Plugin Interface
+
+A plugin is a simple JavaScript object:
+
+```typescript
+type LoggerPlugin = {
+  readonly name: string;         // Unique identifier
+  readonly order?: number;       // Execution priority (default: 100)
+
+  // Lifecycle hooks (all optional)
+  onInit?(logger: Logger): void;
+  onRecord?(record: LogRecord): LogRecord | null;
+  onFormat?(record: LogRecord, formatted: string): string;
+  onWrite?(record: LogRecord, formatted: string): void;
+  onFlush?(): Promise<void> | void;
+  onClose?(): Promise<void> | void;
+};
+```
+
+## Plugin Lifecycle
+
+<Mermaid chart="graph LR
+    A[Logger Created] --> B[onInit]
+    B --> C[Log Call]
+    C --> D[onRecord]
+    D --> E{Keep?}
+    E -->|null| F[Drop]
+    E -->|LogRecord| G[Format]
+    G --> H[onFormat]
+    H --> I[Write]
+    I --> J[onWrite]
+    K[flush] --> L[onFlush]
+    M[close] --> N[onClose]" />
+
+### Hook Execution Order
+
+Hooks run in order of the plugin's `order` property (ascending):
+
+```typescript
+const logger = createLogger({
+  plugins: [
+    { name: "third", order: 30, onRecord: ... },   // Runs 3rd
+    { name: "first", order: 10, onRecord: ... },   // Runs 1st
+    { name: "second", order: 20, onRecord: ... },  // Runs 2nd
+    { name: "default", onRecord: ... },            // Runs 4th (order: 100)
+  ],
+});
+```
+
+<Callout type="warn">
+**Important**: Plugin order matters! Place filters/sampling early, enrichment later.
+</Callout>
+
+## The 6 Hooks Explained
+
+### 1. onInit
+
+Called once when the logger is created.
+
+```typescript
+{
+  name: "my-plugin",
+  onInit(logger: Logger) {
+    console.log("Plugin initialized!");
+    // Setup resources, validate config, etc.
+  }
+}
+```
+
+**Use cases:**
+- Initialize connections (databases, metrics clients)
+- Validate configuration
+- Setup shared state
+
+### 2. onRecord
+
+Transform or filter log records **before** formatting.
+
+```typescript
+onRecord(record: LogRecord): LogRecord | null
+```
+
+**Return:**
+- `LogRecord` - Keep and potentially modify the record
+- `null` - Drop the record (won't be logged)
+
+**Example: Sampling Plugin**
+
+```typescript
+{
+  name: "sampling",
+  order: 10, // Run early
+  onRecord(record: LogRecord): LogRecord | null {
+    // Drop 90% of debug logs
+    if (record.level === "debug" && Math.random() > 0.1) {
+      return null; // Drop
+    }
+    return record; // Keep
+  }
+}
+```
+
+**Example: Enrichment Plugin**
+
+```typescript
+{
+  name: "enrich",
+  order: 50,
+  onRecord(record: LogRecord): LogRecord {
+    return {
+      ...record,
+      context: {
+        ...record.context,
+        hostname: os.hostname(),
+        pid: process.pid,
+        timestamp: new Date().toISOString(),
+      }
+    };
+  }
+}
+```
+
+<Callout type="warn">
+**Performance**: Keep `onRecord` fast! It runs synchronously on every log call.
+</Callout>
+
+### 3. onFormat
+
+Modify the formatted log string **after** formatting.
+
+```typescript
+onFormat(record: LogRecord, formatted: string): string
+```
+
+**Example: Add Prefix**
+
+```typescript
+{
+  name: "prefix",
+  onFormat(record: LogRecord, formatted: string): string {
+    return `[MY-APP] ${formatted}`;
+  }
+}
+```
+
+**Example: Add Checksum**
+
+```typescript
+{
+  name: "checksum",
+  onFormat(record: LogRecord, formatted: string): string {
+    const hash = crypto.createHash("md5").update(formatted).digest("hex");
+    const obj = JSON.parse(formatted);
+    return JSON.stringify({ ...obj, checksum: hash });
+  }
+}
+```
+
+**When to use:**
+- Add metadata to formatted output
+- Modify field names
+- Add checksums or signatures
+
+### 4. onWrite
+
+Called **after** transports write the log (fire-and-forget).
+
+```typescript
+onWrite(record: LogRecord, formatted: string): void
+```
+
+**Example: Metrics Counter**
+
+```typescript
+{
+  name: "metrics",
+  onWrite(record: LogRecord) {
+    metrics.increment("logs.total", 1, {
+      level: record.level,
+      service: record.service,
+    });
+  }
+}
+```
+
+**Example: Forward to External Service**
+
+```typescript
+{
+  name: "forward",
+  onWrite(record: LogRecord) {
+    // Fire-and-forget HTTP request
+    fetch("https://logs.example.com/ingest", {
+      method: "POST",
+      body: JSON.stringify(record),
+    }).catch(err => console.error("Forward failed:", err));
+  }
+}
+```
+
+**When to use:**
+- Send metrics
+- Forward to external services
+- Track log statistics
+- Side effects that shouldn't block logging
+
+<Callout type="info">
+**Tip**: Use `onWrite` for async I/O. It won't block the log call.
+</Callout>
+
+### 5. onFlush
+
+Called when `logger.flush()` is called.
+
+```typescript
+onFlush(): Promise<void> | void
+```
+
+**Example: Batch Plugin**
+
+```typescript
+{
+  name: "batch",
+  buffer: [],
+
+  onRecord(record: LogRecord): LogRecord {
+    this.buffer.push(record);
+    return record;
+  },
+
+  async onFlush(): Promise<void> {
+    if (this.buffer.length === 0) return;
+
+    await fetch("/api/logs/batch", {
+      method: "POST",
+      body: JSON.stringify(this.buffer),
+    });
+
+    this.buffer = [];
+  }
+}
+```
+
+**When to use:**
+- Flush buffered logs
+- Send batched data
+- Ensure data persistence
+
+### 6. onClose
+
+Called when `logger.close()` is called.
+
+```typescript
+onClose(): Promise<void> | void
+```
+
+**Example: Cleanup Resources**
+
+```typescript
+{
+  name: "database",
+  connection: null,
+
+  onInit() {
+    this.connection = createDbConnection();
+  },
+
+  onWrite(record) {
+    this.connection.insert(record);
+  },
+
+  async onClose(): Promise<void> {
+    await this.connection.close();
+  }
+}
+```
+
+**When to use:**
+- Close connections
+- Cleanup resources
+- Final data flush
+
+## Real-World Examples
+
+### Example 1: Sampling Plugin
+
+Drop percentage of logs to reduce volume:
+
+```typescript
+import type { LoggerPlugin, LogRecord, LogLevel } from "cenglu";
+
+interface SamplingOptions {
+  defaultRate?: number; // 0.0 to 1.0 (1.0 = keep all)
+  rates?: Partial<Record<LogLevel, number>>;
+}
+
+export function samplingPlugin(options: SamplingOptions = {}): LoggerPlugin {
+  const { defaultRate = 1.0, rates = {} } = options;
+
+  return {
+    name: "sampling",
+    order: 10, // Run early to avoid unnecessary work
+
+    onRecord(record: LogRecord): LogRecord | null {
+      const rate = rates[record.level] ?? defaultRate;
+
+      if (Math.random() >= rate) {
+        return null; // Drop this log
+      }
+
+      return record; // Keep this log
+    },
+  };
+}
+
+// Usage
+const logger = createLogger({
+  plugins: [
+    samplingPlugin({
+      defaultRate: 0.1,  // Keep 10% by default
+      rates: {
+        error: 1.0,      // Always keep errors
+        warn: 0.5,       // Keep 50% of warnings
+        debug: 0.01,     // Keep 1% of debug logs
+      },
+    }),
+  ],
+});
+```
+
+### Example 2: Filter Plugin
+
+Drop logs matching patterns:
+
+```typescript
+import type { LoggerPlugin, LogRecord } from "cenglu";
+
+interface FilterOptions {
+  excludeMessages?: Array<string | RegExp>;
+  excludeLevels?: LogLevel[];
+  includeOnly?: Array<string | RegExp>;
+}
+
+export function filterPlugin(options: FilterOptions = {}): LoggerPlugin {
+  const { excludeMessages = [], excludeLevels = [], includeOnly } = options;
+
+  return {
+    name: "filter",
+    order: 10,
+
+    onRecord(record: LogRecord): LogRecord | null {
+      // Exclude specific levels
+      if (excludeLevels.includes(record.level)) {
+        return null;
+      }
+
+      // Exclude messages matching patterns
+      for (const pattern of excludeMessages) {
+        if (typeof pattern === "string") {
+          if (record.msg.includes(pattern)) return null;
+        } else if (pattern.test(record.msg)) {
+          return null;
+        }
+      }
+
+      // Include only messages matching patterns
+      if (includeOnly && includeOnly.length > 0) {
+        const matches = includeOnly.some(pattern => {
+          if (typeof pattern === "string") {
+            return record.msg.includes(pattern);
+          }
+          return pattern.test(record.msg);
+        });
+
+        if (!matches) return null;
+      }
+
+      return record;
+    },
+  };
+}
+
+// Usage
+const logger = createLogger({
+  plugins: [
+    filterPlugin({
+      excludeMessages: [
+        "health check",
+        /heartbeat/i,
+        "GET /metrics",
+      ],
+      excludeLevels: ["trace"],
+    }),
+  ],
+});
+```
+
+### Example 3: Enrichment Plugin
+
+Add context to every log:
+
+```typescript
+import type { LoggerPlugin, LogRecord, Bindings } from "cenglu";
+import os from "node:os";
+
+interface EnrichOptions {
+  fields?: Bindings;
+  dynamicFields?: Record<string, () => unknown>;
+  addHostname?: boolean;
+  addProcessInfo?: boolean;
+}
+
+export function enrichPlugin(options: EnrichOptions = {}): LoggerPlugin {
+  const {
+    fields = {},
+    dynamicFields = {},
+    addHostname = false,
+    addProcessInfo = false,
+  } = options;
+
+  // Pre-compute static values
+  const staticContext: Bindings = { ...fields };
+
+  if (addHostname) {
+    staticContext.hostname = os.hostname();
+  }
+
+  if (addProcessInfo) {
+    staticContext.pid = process.pid;
+    staticContext.platform = process.platform;
+    staticContext.nodeVersion = process.version;
+  }
+
+  return {
+    name: "enrich",
+    order: 50, // Run after filters/sampling
+
+    onRecord(record: LogRecord): LogRecord {
+      // Compute dynamic fields
+      const dynamicContext: Bindings = {};
+      for (const [key, fn] of Object.entries(dynamicFields)) {
+        try {
+          dynamicContext[key] = fn();
+        } catch (err) {
+          console.error(`Enrichment field "${key}" failed:`, err);
+        }
+      }
+
+      return {
+        ...record,
+        context: {
+          ...record.context,
+          ...staticContext,
+          ...dynamicContext,
+        },
+      };
+    },
+  };
+}
+
+// Usage
+const logger = createLogger({
+  plugins: [
+    enrichPlugin({
+      fields: {
+        app: "my-app",
+        version: "1.2.3",
+      },
+      dynamicFields: {
+        uptime: () => process.uptime(),
+        memoryUsage: () => process.memoryUsage().heapUsed,
+      },
+      addHostname: true,
+      addProcessInfo: true,
+    }),
+  ],
+});
+```
+
+### Example 4: Batching Plugin
+
+Buffer and send logs in batches:
+
+```typescript
+import type { LoggerPlugin, LogRecord } from "cenglu";
+
+interface BatchingOptions {
+  maxBatchSize?: number;
+  maxWaitMs?: number;
+  onBatch: (records: LogRecord[]) => Promise<void>;
+  flushOnError?: boolean;
+}
+
+export function batchingPlugin(options: BatchingOptions): LoggerPlugin {
+  const {
+    maxBatchSize = 100,
+    maxWaitMs = 5000,
+    onBatch,
+    flushOnError = true,
+  } = options;
+
+  let buffer: LogRecord[] = [];
+  let timer: NodeJS.Timeout | null = null;
+
+  const flush = async () => {
+    if (buffer.length === 0) return;
+
+    const batch = buffer;
+    buffer = [];
+
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+
+    try {
+      await onBatch(batch);
+    } catch (err) {
+      console.error("[batching-plugin] Failed to send batch:", err);
+    }
+  };
+
+  const scheduleFlush = () => {
+    if (timer) return;
+    timer = setTimeout(() => flush(), maxWaitMs);
+  };
+
+  return {
+    name: "batching",
+    order: 100, // Run late to capture final records
+
+    onRecord(record: LogRecord): LogRecord {
+      buffer.push(record);
+
+      // Flush immediately on errors if configured
+      if (flushOnError && (record.level === "error" || record.level === "fatal")) {
+        flush();
+      }
+      // Flush when batch is full
+      else if (buffer.length >= maxBatchSize) {
+        flush();
+      }
+      // Schedule flush
+      else {
+        scheduleFlush();
+      }
+
+      return record;
+    },
+
+    async onFlush(): Promise<void> {
+      await flush();
+    },
+
+    async onClose(): Promise<void> {
+      await flush();
+    },
+  };
+}
+
+// Usage
+const logger = createLogger({
+  plugins: [
+    batchingPlugin({
+      maxBatchSize: 50,
+      maxWaitMs: 10000,
+      flushOnError: true,
+      async onBatch(records) {
+        await fetch("https://logs.example.com/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(records),
+        });
+      },
+    }),
+  ],
+});
+```
+
+## Plugin Best Practices
+
+### 1. Keep onRecord Fast
+
+```typescript
+// ❌ Bad - blocks logging
+{
+  async onRecord(record) {
+    const data = await fetch("/api/enrich"); // DON'T DO THIS
+    return { ...record, context: { ...data } };
+  }
+}
+
+// ✅ Good - fast and synchronous
+{
+  onRecord(record) {
+    return {
+      ...record,
+      context: {
+        ...record.context,
+        timestamp: Date.now(),
+      }
+    };
+  }
+}
+```
+
+### 2. Handle Errors Gracefully
+
+```typescript
+{
+  name: "safe-plugin",
+  onRecord(record) {
+    try {
+      // Your logic
+      return transformRecord(record);
+    } catch (err) {
+      console.error("[safe-plugin] Error:", err);
+      return record; // Return original on error
+    }
+  }
+}
+```
+
+### 3. Use Appropriate Order Values
+
+```typescript
+plugins: [
+  // Early (10-30): Filters, sampling
+  samplingPlugin({ order: 10 }),
+  filterPlugin({ order: 20 }),
+
+  // Middle (40-60): Enrichment, transformation
+  enrichPlugin({ order: 50 }),
+  redactionPlugin({ order: 55 }),
+
+  // Late (70-100): Metrics, forwarding, batching
+  metricsPlugin({ order: 80 }),
+  batchingPlugin({ order: 100 }),
+]
+```
+
+### 4. Do I/O in onWrite, onFlush, or onClose
+
+```typescript
+{
+  name: "http-forwarder",
+
+  // ✅ Good - fire-and-forget in onWrite
+  onWrite(record) {
+    fetch("/api/logs", {
+      method: "POST",
+      body: JSON.stringify(record)
+    }).catch(err => console.error("Forward failed:", err));
+  },
+
+  // ✅ Good - batched I/O in onFlush
+  buffer: [],
+
+  onRecord(record) {
+    this.buffer.push(record);
+    return record;
+  },
+
+  async onFlush() {
+    if (this.buffer.length === 0) return;
+    await sendBatch(this.buffer);
+    this.buffer = [];
+  }
+}
+```
+
+### 5. Clean Up Resources
+
+```typescript
+{
+  name: "resource-plugin",
+  client: null,
+
+  onInit() {
+    this.client = createClient();
+  },
+
+  onWrite(record) {
+    this.client.send(record);
+  },
+
+  async onClose() {
+    if (this.client) {
+      await this.client.close();
+      this.client = null;
+    }
+  }
+}
+```
+
+## Plugin Composition
+
+Plugins can work together:
+
+```typescript
+const logger = createLogger({
+  plugins: [
+    // 1. Sample: Drop 90% of debug logs
+    samplingPlugin({
+      order: 10,
+      rates: { debug: 0.1 },
+    }),
+
+    // 2. Filter: Drop health checks
+    filterPlugin({
+      order: 20,
+      excludeMessages: ["health check"],
+    }),
+
+    // 3. Enrich: Add metadata (only on remaining 10%)
+    enrichPlugin({
+      order: 50,
+      addHostname: true,
+      fields: { app: "my-app" },
+    }),
+
+    // 4. Metrics: Count by level
+    metricsPlugin({
+      order: 80,
+    }),
+
+    // 5. Batch: Send to external service
+    batchingPlugin({
+      order: 100,
+      maxBatchSize: 100,
+      onBatch: sendToDatadog,
+    }),
+  ],
+});
+```
+
+## Testing Plugins
+
+Use the testing utilities to test your plugins:
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { createTestLogger } from "cenglu/testing";
+
+describe("samplingPlugin", () => {
+  it("drops logs based on rate", () => {
+    const { logger, transport, random } = createTestLogger({
+      randomValues: [0.1, 0.9], // First passes, second drops
+      plugins: [
+        samplingPlugin({ defaultRate: 0.5 }),
+      ],
+    });
+
+    logger.info("Log 1"); // 0.1 < 0.5 → kept
+    logger.info("Log 2"); // 0.9 >= 0.5 → dropped
+
+    expect(transport.logs).toHaveLength(1);
+    expect(transport.first()?.msg).toBe("Log 1");
+  });
+});
+```
+
+## Debugging Plugins
+
+### Check Plugin Execution
+
+```typescript
+const logger = createLogger({
+  plugins: [
+    {
+      name: "debug",
+      onRecord(record) {
+        console.log("[debug] onRecord:", record.msg);
+        return record;
+      },
+      onFormat(record, formatted) {
+        console.log("[debug] onFormat:", formatted);
+        return formatted;
+      },
+      onWrite(record) {
+        console.log("[debug] onWrite:", record.msg);
+      },
+    },
+  ],
+});
+```
+
+### Common Issues
+
+<div className="space-y-4">
+
+**Logs disappearing?**
+- Check if a plugin returns `null` from `onRecord`
+- Verify plugin order (sampling/filtering early?)
+- Check logger level configuration
+
+**Performance slow?**
+- Check `onRecord` hooks - should be fast
+- Move I/O to `onWrite` or `onFlush`
+- Profile plugin execution time
+
+**Plugin not running?**
+- Verify plugin is in the `plugins` array
+- Check if logger level is filtering logs before plugins
+- Ensure `onRecord` returns the record
+
+**Errors in plugins?**
+- Check stderr for plugin error messages
+- Add try-catch blocks in plugin hooks
+- Use the testing utilities to isolate issues
+
+</div>
+
+## Built-in Plugins
+
+Cenglu ships with several plugins ready to use:
+
+```typescript
+import {
+  samplingPlugin,
+  filterPlugin,
+  enrichPlugin,
+  batchingPlugin,
+  rateLimitPlugin,
+  redactionPlugin,
+  metricsPlugin,
+} from "cenglu/plugins";
+```
+
+See [Built-in Plugins](/docs/plugins/built-in-plugins) for complete documentation.
+
+## Related Documentation
+
+- [Creating Plugins](/docs/plugins/creating-plugins) - Detailed plugin development guide
+- [Built-in Plugins](/docs/plugins/built-in-plugins) - Reference for included plugins
+- [Data Flow](/docs/architecture/data-flow) - How plugins fit in the pipeline
+- [Testing](/docs/development/testing) - Test your plugins
+
+## Source Code
+
+- **Plugin Interface**: [`src/types.ts`](https://github.com/ayungavis/cenglu/blob/main/src/types.ts)
+- **Built-in Plugins**: [`src/plugins/`](https://github.com/ayungavis/cenglu/tree/main/src/plugins)
+- **Plugin Execution**: [`src/logger.ts`](https://github.com/ayungavis/cenglu/blob/main/src/logger.ts) (search for `initializePlugins`, `onRecord`, `onFormat`, `onWrite`)

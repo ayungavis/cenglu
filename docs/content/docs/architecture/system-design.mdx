@@ -1,0 +1,913 @@
+---
+title: System Design
+description: Cenglu's architecture, design principles, and core components
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Mermaid } from "@/components/mdx/mermaid";
+
+# System Design
+
+Cenglu is built on three core principles: **performance**, **security**, and **extensibility**. This guide explains the architecture, design decisions, and how everything fits together.
+
+<Callout type="info">
+**TL;DR**: Cenglu uses a pipeline architecture where logs flow through: Logger → Plugins → Formatter → Transports
+</Callout>
+
+## High-Level Architecture
+
+<Mermaid chart="graph TD
+    A[Application Code] --> B[Logger Instance]
+    B --> C[Plugin Pipeline]
+    C --> D[Formatter]
+    D --> E1[Console Transport]
+    D --> E2[File Transport]
+    D --> E3[Custom Transport]
+    D --> F1[External Adapter]
+    D --> F2[Metrics Adapter]
+
+    style B fill:#e1f5ff
+    style C fill:#fff4e1
+    style D fill:#ffe1f5
+    style E1 fill:#e1ffe1
+    style E2 fill:#e1ffe1
+    style E3 fill:#e1ffe1" />
+
+## Core Components
+
+### 1. Logger Instance
+
+The main orchestrator that manages state, configuration, and coordinates all logging operations.
+
+<Mermaid chart="graph LR
+    A[Logger Instance] --> B[State]
+    A --> C[Config]
+    A --> D[Transports]
+    A --> E[Plugins]
+    A --> F[Adapters]
+
+    B --> B1[level]
+    B --> B2[service]
+    B --> B3[bindings]
+
+    C --> C1[formatters]
+    C --> C2[redaction]
+    C --> C3[sampling]" />
+
+**State (Mutable)**:
+- Current log level
+- Service metadata (name, env, version)
+- Permanent bindings (context shared across all logs)
+
+**Config (Immutable)**:
+- Output format settings (pretty, JSON, ECS, etc.)
+- Sampling rates
+- Redaction patterns
+- Time and random functions (for testing)
+
+**Key Design Decisions:**
+
+- **Configuration is immutable** after creation - prevents race conditions
+- **Level can be changed dynamically** - useful for runtime debugging
+- **Child loggers share resources** - minimal memory overhead
+- **Fast level checks** - exit early if log won't be written
+
+**Logger Class Structure:**
+
+```typescript
+export class Logger {
+  // Mutable state
+  private state: LoggerState;
+
+  // Immutable config
+  private config: LoggerConfig;
+
+  // Output destinations
+  private transports: Transport[];
+  private adapters: readonly ProviderAdapter[];
+
+  // Extension points
+  private plugins: readonly LoggerPlugin[];
+  private redactor: Redactor | null;
+
+  // Lifecycle tracking
+  private closed = false;
+  private isChild: boolean;
+}
+```
+
+**Example: Logger Hierarchy**
+
+```typescript
+// Parent logger allocates resources
+const parent = createLogger({
+  service: "api",
+  transports: [consoleTransport, fileTransport],
+  plugins: [samplingPlugin(), enrichPlugin()],
+});
+
+// Child shares parent's transports and plugins
+const child = parent.child({ module: "users" });
+
+// Grandchild also shares resources
+const grandchild = child.child({ operation: "create" });
+
+// Cleanup: only close parent
+await parent.close(); // Closes shared transports/plugins
+```
+
+### 2. LogRecord
+
+The canonical data structure representing a single log entry.
+
+```typescript
+type LogRecord = {
+  time: number;           // Unix timestamp (milliseconds)
+  level: LogLevel;        // "trace" | "debug" | "info" | "warn" | "error" | "fatal"
+  msg: string;            // Log message
+  context?: Bindings;     // Structured key-value context
+  err?: ErrorInfo | null; // Error details (if present)
+  service?: string;       // Service name
+  env?: string;           // Environment (dev, staging, prod)
+  version?: string;       // Application version
+  traceId?: string;       // Distributed tracing ID
+  spanId?: string;        // Distributed tracing span ID
+};
+```
+
+**Example LogRecord:**
+
+```typescript
+{
+  time: 1700000000000,
+  level: "info",
+  msg: "User created successfully",
+  context: {
+    userId: 12345,
+    email: "user@example.com",
+    requestId: "abc-123",
+    duration: 42,
+  },
+  service: "user-service",
+  env: "production",
+  version: "1.2.3",
+  traceId: "abc-123-def-456",
+  spanId: "span-789",
+}
+```
+
+**Context Merging:**
+
+Context comes from multiple sources, merged in this order (later overrides earlier):
+
+<Mermaid chart="graph LR
+    A[Global Bindings] --> B[Child Bindings]
+    B --> C[Async Context]
+    C --> D[Bound Context]
+    D --> E[Call-Site Context]
+    E --> F[Final Context]
+
+    style F fill:#e1ffe1" />
+
+```typescript
+// 1. Global bindings
+const logger = createLogger({
+  bindings: { service: "api", env: "prod" }
+});
+
+// 2. Child bindings
+const child = logger.child({ module: "users" });
+
+// 3. Async context (from middleware)
+LoggerContext.run({ requestId: "abc-123" }, () => {
+
+  // 4. Bound context
+  child
+    .with({ operation: "create" })
+
+    // 5. Call-site context
+    .info("User created", { userId: 456 });
+
+  // Final context: { service, env, module, requestId, operation, userId }
+});
+```
+
+### 3. Plugin System
+
+Plugins extend functionality through lifecycle hooks.
+
+<Mermaid chart="graph TD
+    A[Logger Created] --> B[onInit]
+    B --> C{Log Call}
+    C --> D[onRecord]
+    D --> E{Keep Log?}
+    E -->|null| F[Drop]
+    E -->|LogRecord| G[Format]
+    G --> H[onFormat]
+    H --> I[Write to Transports]
+    I --> J[onWrite]
+
+    K[logger.flush] --> L[onFlush]
+    M[logger.close] --> N[onClose]" />
+
+**Plugin Interface:**
+
+```typescript
+type LoggerPlugin = {
+  readonly name: string;         // Unique identifier
+  readonly order?: number;       // Execution priority (default: 100)
+
+  onInit?(logger: Logger): void;                              // Setup
+  onRecord?(record: LogRecord): LogRecord | null;             // Transform/filter
+  onFormat?(record: LogRecord, formatted: string): string;    // Modify output
+  onWrite?(record: LogRecord, formatted: string): void;       // Side effects
+  onFlush?(): Promise<void> | void;                           // Flush buffers
+  onClose?(): Promise<void> | void;                           // Cleanup
+};
+```
+
+**Plugin Execution Order:**
+
+```typescript
+plugins: [
+  { name: "sampling", order: 10 },    // Runs 1st - drop unwanted logs
+  { name: "redaction", order: 20 },   // Runs 2nd - remove sensitive data
+  { name: "enrich", order: 50 },      // Runs 3rd - add context
+  { name: "metrics", order: 80 },     // Runs 4th - count logs
+  { name: "batch", order: 100 },      // Runs 5th (default) - buffer & send
+]
+```
+
+**See [Plugin System](/docs/architecture/plugin-system) for detailed documentation.**
+
+### 4. Transports
+
+Transports write formatted logs to destinations (console, files, network, etc.).
+
+```typescript
+type Transport = {
+  write(record: LogRecord, formatted: string, isError: boolean): void;
+  flush?(): Promise<void>;   // Flush any buffers
+  close?(): Promise<void>;   // Cleanup resources
+};
+```
+
+**Transport Types:**
+
+| Type | Description | Examples | Blocking? |
+|------|-------------|----------|-----------|
+| **Synchronous** | Writes immediately | Console, File | ✅ Yes |
+| **Asynchronous** | Returns promises | HTTP, Database | ✅ Yes |
+| **Buffered** | Batches for performance | Batch File, Network | ✅ Yes |
+
+**Example: Console Transport**
+
+```typescript
+const consoleTransport: Transport = {
+  write(record, formatted, isError) {
+    const stream = isError ? process.stderr : process.stdout;
+    stream.write(formatted + "\n");
+  },
+
+  async flush() {
+    // Nothing to flush for console
+  },
+
+  async close() {
+    // Nothing to close for console
+  },
+};
+```
+
+**Multiple Transports:**
+
+```typescript
+const logger = createLogger({
+  transports: [
+    consoleTransport,           // Write to console
+    fileTransport,              // Write to file
+    httpTransport,              // Send to log aggregator
+  ],
+});
+
+// Log is written to ALL transports
+logger.info("Application started");
+```
+
+**See [Custom Transports](/docs/transports/custom) for implementation guide.**
+
+### 5. Adapters
+
+Adapters forward logs to external services **without blocking** the logging pipeline.
+
+```typescript
+type ProviderAdapter = {
+  readonly name: string;
+  level?: LogLevel;  // Optional: only handle certain levels
+  handle(record: LogRecord): void | Promise<void>;
+};
+```
+
+**Adapter vs Transport:**
+
+
+| Feature | Transport | Adapter |
+|---------|-----------|---------|
+| **Purpose** | Write formatted logs | Forward to external services |
+| **Format** | Uses formatted string | Uses raw LogRecord object |
+| **Blocking** | ✅ Yes (synchronous) | ❌ No (fire-and-forget) |
+| **Errors** | Propagate to caller | Caught and logged |
+| **Use Cases** | Console, File | Datadog, Splunk, Metrics |
+| **Performance** | Can slow down logging | Non-blocking |
+
+**Example: Metrics Adapter**
+
+```typescript
+const metricsAdapter: ProviderAdapter = {
+  name: "metrics",
+  level: "error", // Only track errors
+
+  async handle(record) {
+    await metrics.increment("errors.total", 1, {
+      service: record.service,
+      level: record.level,
+    });
+  },
+};
+
+const logger = createLogger({
+  adapters: [metricsAdapter],
+});
+
+// Logs normally, metrics sent in background
+logger.error("Database connection failed");
+```
+
+### 6. Context System
+
+Request-scoped context using Node.js AsyncLocalStorage.
+
+```typescript
+import { AsyncLocalStorage } from "async_hooks";
+
+class LoggerContext {
+  private static storage = new AsyncLocalStorage<LogContext>();
+
+  static run<T>(context: LogContext, fn: () => T): T {
+    return this.storage.run(context, fn);
+  }
+
+  static get(): LogContext | undefined {
+    return this.storage.getStore();
+  }
+}
+```
+
+**How It Works:**
+
+<Mermaid chart="sequenceDiagram
+    participant App
+    participant Middleware
+    participant AsyncStorage
+    participant Logger
+
+    App->>Middleware: HTTP Request
+    Middleware->>AsyncStorage: Store { requestId, userId }
+    Middleware->>App: Continue
+    App->>Logger: logger.info('Action')
+    Logger->>AsyncStorage: Get context
+    AsyncStorage->>Logger: { requestId, userId }
+    Logger->>Logger: Merge into LogRecord" />
+
+**Example: Express Middleware**
+
+```typescript
+import { LoggerContext } from "cenglu";
+import { randomUUID } from "crypto";
+
+app.use((req, res, next) => {
+  LoggerContext.run({
+    requestId: randomUUID(),
+    userId: req.user?.id,
+    method: req.method,
+    path: req.path,
+  }, () => {
+    next();
+  });
+});
+
+// Anywhere in request handlers:
+logger.info("Processing request");
+// Automatically includes: requestId, userId, method, path
+```
+
+**See [Context & Bindings](/docs/features/context-bindings) for detailed guide.**
+
+## Design Principles
+
+### 1. Zero Dependencies
+
+**Why?**
+- Smaller bundle size (< 500KB)
+- No transitive dependency vulnerabilities
+- Faster installation
+- Easier auditing
+
+**How?**
+- Pure TypeScript/JavaScript
+- Only Node.js built-ins (`fs`, `async_hooks`, etc.)
+- Self-contained implementations
+
+```typescript
+// ✅ What we use
+import { AsyncLocalStorage } from "async_hooks";
+import { createWriteStream } from "fs";
+import { gzipSync } from "zlib";
+
+// ❌ What we DON'T use
+// import chalk from "chalk";
+// import moment from "moment";
+// import lodash from "lodash";
+```
+
+### 2. Performance First
+
+**Optimization Strategies:**
+
+<div className="space-y-4">
+
+**1. Early Exit on Level Check**
+```typescript
+public info(msg: string, context?: Bindings): void {
+  if (!this.isLevelEnabled("info")) return; // Fast exit
+  // ... expensive operations only if needed
+}
+```
+
+**2. Lazy Error Serialization**
+```typescript
+// Only serialize error if log actually happens
+if (error) {
+  record.err = extractError(error); // Deferred work
+}
+```
+
+**3. Minimal Allocations**
+```typescript
+// Reuse objects, avoid unnecessary copies
+return {
+  ...record,
+  context: mergedContext, // Single merge, not multiple spreads
+};
+```
+
+**4. Efficient String Formatting**
+```typescript
+// Fast JSON.stringify for structured logs
+formatted = JSON.stringify(record);
+
+// Pre-allocated color codes for pretty logs
+const colors = { red: "\x1b[31m", reset: "\x1b[0m" };
+```
+
+</div>
+
+**Benchmarks:**
+
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Logger creation | ~0.001ms | Minimal setup |
+| Simple log (no context) | ~0.003ms | Level check + format |
+| Log with context | ~0.005ms | Including merge |
+| Child logger creation | ~0.002ms | Shared resources |
+| Error serialization | ~0.010ms | Stack trace parsing |
+
+**Performance Tips:**
+
+```typescript
+// ❌ Slow - always computes
+logger.debug("Stats", { stats: computeExpensiveStats() });
+
+// ✅ Fast - only computes if debug enabled
+if (logger.isLevelEnabled("debug")) {
+  logger.debug("Stats", { stats: computeExpensiveStats() });
+}
+```
+
+### 3. Security by Default
+
+**Built-in Security Features:**
+
+<div className="space-y-4">
+
+**1. Automatic Redaction**
+```typescript
+const logger = createLogger({
+  redaction: { enabled: true },
+});
+
+logger.info("User login", {
+  password: "secret123",      // → [REDACTED]
+  apiKey: "sk_live_abc123",   // → [REDACTED]
+  creditCard: "4532-1234-5678-9010", // → [REDACTED]
+});
+```
+
+**2. Safe Error Serialization**
+```typescript
+// Prevents prototype pollution
+function extractError(error: unknown): ErrorInfo {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      // ... safely extract properties
+    };
+  }
+  // Handle non-Error objects safely
+  return { message: String(error) };
+}
+```
+
+**3. Input Validation**
+```typescript
+// Validates log level
+if (!VALID_LEVELS.includes(level)) {
+  throw new Error(`Invalid log level: ${level}`);
+}
+```
+
+**4. No Code Injection**
+```typescript
+// Pure data processing - no eval, no Function constructor
+const formatted = JSON.stringify(record);
+```
+
+</div>
+
+**See [Redaction Guide](/docs/features/redaction) for security features.**
+
+### 4. Type Safety
+
+**Comprehensive TypeScript Types:**
+
+```typescript
+// Type-safe log levels
+type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
+// Type-safe context
+type Bindings = {
+  [key: string]: unknown;
+};
+
+// Type-safe logger options
+type LoggerOptions = {
+  level?: LogLevel;
+  service?: string;
+  env?: string;
+  bindings?: Bindings;
+  transports?: Transport[];
+  plugins?: LoggerPlugin[];
+  // ... 20+ typed options
+};
+
+// Type-safe logger instance
+interface Logger {
+  info(msg: string, context?: Bindings): void;
+  error(msg: string, error?: Error, context?: Bindings): void;
+  child(bindings: Bindings): Logger;
+  // ... fully typed API
+}
+```
+
+**Benefits:**
+- Autocomplete in IDEs
+- Compile-time error checking
+- Refactoring safety
+- Self-documenting API
+
+### 5. Extensibility
+
+**Multiple Extension Points:**
+
+<Mermaid chart="graph TD
+    A[Extend Cenglu] --> B[Plugins]
+    A --> C[Transports]
+    A --> D[Adapters]
+    A --> E[Formatters]
+    A --> F[Redactors]
+
+    B --> B1[Transform logs]
+    B --> B2[Filter logs]
+    B --> B3[Side effects]
+
+    C --> C1[Write locally]
+    C --> C2[Network output]
+
+    D --> D1[External services]
+    D --> D2[Metrics/monitoring]
+
+    E --> E1[Custom formats]
+    E --> E2[Custom layouts]
+
+    F --> F1[Custom patterns]
+    F --> F2[Field-level redaction]" />
+
+**Extension Examples:**
+
+```typescript
+// 1. Plugin: Add request timing
+const timingPlugin: LoggerPlugin = {
+  name: "timing",
+  onRecord(record) {
+    return {
+      ...record,
+      context: {
+        ...record.context,
+        processingTime: Date.now() - record.time,
+      },
+    };
+  },
+};
+
+// 2. Transport: Write to database
+const dbTransport: Transport = {
+  async write(record, formatted) {
+    await db.logs.insert(record);
+  },
+};
+
+// 3. Adapter: Send to monitoring
+const monitoringAdapter: ProviderAdapter = {
+  name: "monitoring",
+  async handle(record) {
+    await monitoring.track(record);
+  },
+};
+
+// 4. Formatter: Custom layout
+const customFormatter = (record: LogRecord) => {
+  return `[${record.level.toUpperCase()}] ${record.msg}`;
+};
+
+// 5. Redactor: Custom patterns
+const redactor = createRedactor({
+  patterns: [
+    { pattern: /secret\w+/gi, replacement: "[SECRET]" },
+  ],
+});
+```
+
+## Memory Management
+
+### Resource Lifecycle
+
+<Mermaid chart="graph LR
+    A[Create Logger] --> B[Allocate Resources]
+    B --> C[Use Logger]
+    C --> D[Flush Buffers]
+    D --> E[Close Resources]
+    E --> F[GC Cleanup]
+
+    style B fill:#ffe1e1
+    style E fill:#e1ffe1" />
+
+**Proper Resource Management:**
+
+```typescript
+// 1. Create
+const logger = createLogger({
+  transports: [fileTransport], // Allocates file handles
+  plugins: [batchingPlugin()],  // Allocates buffers
+});
+
+// 2. Use
+logger.info("Application started");
+
+// 3. Graceful shutdown
+process.on("SIGTERM", async () => {
+  logger.info("Shutting down...");
+
+  // 4. Flush (ensure all logs are written)
+  await logger.flush();
+
+  // 5. Close (cleanup resources)
+  await logger.close();
+
+  process.exit(0);
+});
+```
+
+### Child Logger Sharing
+
+**Memory-efficient child loggers:**
+
+```typescript
+const parent = createLogger({
+  transports: [consoleTransport, fileTransport], // Allocated once
+  plugins: [samplingPlugin(), enrichPlugin()],   // Allocated once
+});
+
+// Child shares parent's resources
+const child1 = parent.child({ module: "users" });
+const child2 = parent.child({ module: "orders" });
+const child3 = parent.child({ module: "payments" });
+
+// ✅ Only close parent (closes shared resources)
+await parent.close();
+
+// ❌ Never close children (they don't own resources)
+// await child1.close(); // DON'T DO THIS
+```
+
+**Memory Profile:**
+
+| Object | Memory | Shared? |
+|--------|--------|---------|
+| Parent logger | ~10KB | - |
+| Transports | ~5KB | ✅ Shared by all children |
+| Plugins | ~3KB | ✅ Shared by all children |
+| Child logger | ~1KB | Each child (only bindings) |
+
+### Memory Considerations
+
+- **Bindings** - Shallow copies, minimal overhead
+- **Records** - Short-lived, GC-friendly (milliseconds)
+- **Buffers** - Configurable limits in transports/plugins
+- **Context** - Scoped to async operations (request lifecycle)
+- **Formatters** - Stateless, no allocations
+- **Redactors** - Pre-compiled regex, cached patterns
+
+## Error Handling Strategy
+
+### Plugin Errors
+
+**Non-Fatal** - Caught and logged, execution continues:
+
+```typescript
+try {
+  const result = plugin.onRecord?.(record);
+  // ... use result
+} catch (error) {
+  console.error(`[cenglu] Plugin error in "${plugin.name}":`, error);
+  // Continue with original record
+}
+```
+
+**Why?** A broken plugin shouldn't crash your application.
+
+### Transport Errors
+
+**Fatal** - Propagated to caller:
+
+```typescript
+try {
+  transport.write(record, formatted, isError);
+} catch (error) {
+  // Error propagates - application decides how to handle
+  throw error;
+}
+```
+
+**Why?** Application should know if logs can't be written (disk full, etc.).
+
+### Adapter Errors
+
+**Non-Fatal** - Caught and logged, execution continues:
+
+```typescript
+try {
+  await adapter.handle(record);
+} catch (error) {
+  console.error(`[cenglu] Adapter error in "${adapter.name}":`, error);
+  // Continue processing other adapters
+}
+```
+
+**Why?** External service failures shouldn't block logging.
+
+**Error Handling Summary:**
+
+| Component | Error Handling | Impact on Logging |
+|-----------|---------------|-------------------|
+| **Plugin** | Caught & logged | ❌ Continues (plugin skipped) |
+| **Transport** | Propagated | ✅ Blocks (caller handles) |
+| **Adapter** | Caught & logged | ❌ Continues (adapter skipped) |
+| **Formatter** | Propagated | ✅ Blocks (invalid output) |
+
+
+## Real-World Architecture Examples
+
+### Example 1: Microservice with Observability
+
+```typescript
+const logger = createLogger({
+  service: "order-service",
+  env: process.env.NODE_ENV,
+  version: process.env.APP_VERSION,
+  level: process.env.LOG_LEVEL || "info",
+
+  // Structured JSON for production
+  structured: { type: "ecs" },
+
+  // Multiple outputs
+  transports: [
+    createConsoleTransport(),
+    createFileTransport({
+      dir: "/var/log/app",
+      rotation: { intervalDays: 1, maxFiles: 7 },
+    }),
+  ],
+
+  // Forward to external services
+  adapters: [
+    datadogAdapter,
+    metricsAdapter,
+  ],
+
+  // Performance and security
+  plugins: [
+    samplingPlugin({ defaultRate: 0.1, rates: { error: 1.0 } }),
+    redactionPlugin({ useDefaults: true }),
+    enrichPlugin({ addHostname: true, addProcessInfo: true }),
+  ],
+
+  // Distributed tracing
+  traceProvider: () => ({
+    traceId: opentelemetry.trace.getSpan()?.spanContext().traceId,
+    spanId: opentelemetry.trace.getSpan()?.spanContext().spanId,
+  }),
+});
+
+// Use in Express
+app.use(createExpressMiddleware({ logger }));
+```
+
+### Example 2: Serverless Function
+
+```typescript
+const logger = createLogger({
+  service: "lambda-function",
+  level: "info",
+
+  // CloudWatch-friendly format
+  structured: { type: "json" },
+
+  // Minimal setup (Lambda handles output)
+  console: { enabled: true },
+  file: { enabled: false },
+
+  // Fast logging (cold start optimization)
+  plugins: [
+    enrichPlugin({
+      fields: {
+        requestId: process.env.AWS_REQUEST_ID,
+        functionName: process.env.AWS_LAMBDA_FUNCTION_NAME,
+      },
+    }),
+  ],
+});
+
+export const handler = async (event: APIGatewayEvent) => {
+  logger.info("Processing request", { path: event.path });
+  // ... handle request
+};
+```
+
+### Example 3: Development Environment
+
+```typescript
+const logger = createLogger({
+  service: "dev-app",
+  level: "debug",
+
+  // Pretty, colored output for terminals
+  pretty: { enabled: true },
+
+  // Console only
+  transports: [createConsoleTransport()],
+
+  // No sampling in dev
+  plugins: [],
+
+  // Mock time for tests
+  now: Date.now,
+});
+```
+
+## Related Documentation
+
+- [Data Flow](/docs/architecture/data-flow) - How logs flow through the system
+- [Plugin System](/docs/architecture/plugin-system) - Extend with plugins
+- [Creating Plugins](/docs/plugins/creating-plugins) - Build custom plugins
+- [Custom Transports](/docs/transports/custom) - Implement transports
+- [Context & Bindings](/docs/features/context-bindings) - Request-scoped context
+
+## Source Code
+
+- **Logger Core**: [`src/logger.ts`](https://github.com/ayungavis/cenglu/blob/main/src/logger.ts)
+- **Types**: [`src/types.ts`](https://github.com/ayungavis/cenglu/blob/main/src/types.ts)
+- **Context**: [`src/context.ts`](https://github.com/ayungavis/cenglu/blob/main/src/context.ts)
+- **Transports**: [`src/transports/`](https://github.com/ayungavis/cenglu/tree/main/src/transports)
+- **Plugins**: [`src/plugins/`](https://github.com/ayungavis/cenglu/tree/main/src/plugins)

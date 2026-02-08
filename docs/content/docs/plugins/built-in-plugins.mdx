@@ -1,0 +1,597 @@
+---
+title: Built-in Plugins
+description: Complete reference for cenglu's built-in plugins
+---
+
+# Built-in Plugins
+
+Cenglu includes a comprehensive set of built-in plugins for common logging patterns. Plugins extend logger functionality through a standardized lifecycle hook system.
+
+## Sampling Plugin
+
+Reduce log volume by sampling logs based on configurable rates.
+
+### Basic Usage
+
+```typescript
+import { createLogger, samplingPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    samplingPlugin({
+      rates: {
+        trace: 0,      // Drop all trace logs
+        debug: 0.1,    // Keep 10% of debug logs
+        info: 0.5,     // Keep 50% of info logs
+        warn: 1.0,     // Keep all warnings
+      },
+      alwaysLogErrors: true, // Always keep errors
+      alwaysLogFatal: true,  // Always keep fatal
+    }),
+  ],
+});
+```
+
+### Options
+
+```typescript
+type SamplingPluginOptions = {
+  // Per-level sampling rates (0-1)
+  rates?: Partial<Record<LogLevel, number>>;
+
+  // Default rate for levels not specified
+  defaultRate?: number; // Default: 1.0
+
+  // Always log errors regardless of rate
+  alwaysLogErrors?: boolean; // Default: true
+
+  // Always log fatal regardless of rate
+  alwaysLogFatal?: boolean; // Default: true
+
+  // Custom random function (for testing)
+  random?: () => number;
+
+  // Callback when a log is dropped
+  onDrop?: (record: LogRecord) => void;
+
+  // Custom sampling function
+  shouldSample?: (record: LogRecord) => boolean;
+};
+```
+
+### Advanced Usage
+
+#### Custom Sampling Logic
+
+```typescript
+samplingPlugin({
+  shouldSample: (record) => {
+    // Always sample logs with specific context
+    if (record.context?.important) return true;
+
+    // Sample high-severity errors
+    if (record.level === "error" && record.err?.code === "CRITICAL") {
+      return true;
+    }
+
+    // Sample 10% of everything else
+    return Math.random() < 0.1;
+  },
+})
+```
+
+#### With Drop Callback
+
+```typescript
+let droppedCount = 0;
+
+samplingPlugin({
+  rates: { debug: 0.1 },
+  onDrop: (record) => {
+    droppedCount++;
+    if (droppedCount % 1000 === 0) {
+      console.warn(`Dropped ${droppedCount} logs so far`);
+    }
+  },
+})
+```
+
+### Deterministic Sampling
+
+Sample based on consistent keys (e.g., always sample same userId):
+
+```typescript
+import { deterministicSamplingPlugin } from "cenglu";
+
+deterministicSamplingPlugin({
+  rate: 0.1, // 10% sampling
+  sampleKey: (record) => record.context?.userId as string,
+});
+```
+
+## Rate Limit Plugin
+
+Prevent log flooding by limiting the number of logs per time window.
+
+### Basic Usage
+
+```typescript
+import { createLogger, rateLimitPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    rateLimitPlugin({
+      maxLogs: 1000,     // Max 1000 logs
+      windowMs: 1000,    // Per second
+      excludeLevels: ["error", "fatal"], // Always allow errors
+    }),
+  ],
+});
+```
+
+### Options
+
+```typescript
+type RateLimitPluginOptions = {
+  // Maximum logs per window
+  maxLogs: number;
+
+  // Time window in milliseconds
+  windowMs?: number; // Default: 1000
+
+  // Levels to exclude from rate limiting
+  excludeLevels?: LogLevel[]; // Default: ["error", "fatal"]
+
+  // Callback when limit is reached
+  onLimitReached?: (droppedCount: number, windowMs: number) => void;
+
+  // Callback for each dropped log
+  onDrop?: (record: LogRecord) => void;
+
+  // Log summary at end of window
+  logSummary?: boolean; // Default: true
+
+  // Per-key rate limiting
+  keyFn?: (record: LogRecord) => string;
+
+  // Maximum keys to track
+  maxKeys?: number; // Default: 1000
+};
+```
+
+### Advanced Usage
+
+#### Per-User Rate Limiting
+
+```typescript
+rateLimitPlugin({
+  maxLogs: 100,
+  windowMs: 60000, // Per minute
+  keyFn: (record) => {
+    return (record.context?.userId as string) ?? "anonymous";
+  },
+})
+```
+
+#### With Callbacks
+
+```typescript
+rateLimitPlugin({
+  maxLogs: 1000,
+  windowMs: 1000,
+  onLimitReached: (dropped, window) => {
+    console.warn(`Rate limit: dropped ${dropped} logs in ${window}ms`);
+    metricsClient.increment("logs.dropped", dropped);
+  },
+  onDrop: (record) => {
+    // Track which logs are being dropped
+    if (record.level === "warn") {
+      warnDropCount++;
+    }
+  },
+})
+```
+
+### Token Bucket Rate Limiting
+
+More sophisticated rate limiting with burst support:
+
+```typescript
+import { tokenBucketPlugin } from "cenglu";
+
+tokenBucketPlugin({
+  capacity: 1000,      // Bucket capacity
+  refillRate: 100,     // Tokens per second
+  refillInterval: 100, // Refill every 100ms
+})
+```
+
+## Enrichment Plugin
+
+Add additional context to all logs.
+
+### Basic Usage
+
+```typescript
+import { createLogger, enrichPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    enrichPlugin({
+      // Static fields
+      fields: {
+        app: "my-app",
+        version: "1.0.0",
+        region: process.env.AWS_REGION,
+      },
+
+      // Dynamic fields (computed per log)
+      dynamicFields: {
+        timestamp_iso: () => new Date().toISOString(),
+        memory_mb: () => Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      },
+
+      // Add system info
+      addProcessInfo: true,
+      addHostname: true,
+    }),
+  ],
+});
+```
+
+### Options
+
+```typescript
+type EnrichPluginOptions = {
+  // Static fields added to every log
+  fields?: Bindings;
+
+  // Dynamic fields computed per log
+  dynamicFields?: Record<string, () => unknown>;
+
+  // Custom compute function
+  compute?: (record: LogRecord) => Bindings | undefined;
+
+  // Add process information
+  addProcessInfo?: boolean; // pid, node_version, platform, arch
+
+  // Add memory usage
+  addMemoryUsage?: boolean; // rss, heap_used, heap_total, external
+
+  // Add hostname
+  addHostname?: boolean;
+
+  // Custom hostname
+  hostname?: string;
+
+  // Overwrite existing fields
+  overwrite?: boolean; // Default: false
+};
+```
+
+### Advanced Usage
+
+#### Request Enrichment
+
+```typescript
+requestEnrichPlugin({
+  getUserAgent: (record) => record.context?.userAgent,
+  getClientIp: (record) => record.context?.ip,
+  parseUserAgent: true, // Parse user agent string
+})
+```
+
+#### Error Fingerprinting
+
+```typescript
+errorFingerprintPlugin({
+  algorithm: "sha256",
+  include: ["name", "message", "stack"],
+})
+```
+
+#### Custom Compute
+
+```typescript
+enrichPlugin({
+  compute: (record) => {
+    // Add custom fields based on log level
+    if (record.level === "error") {
+      return {
+        severity: "high",
+        alert: true,
+        oncall: process.env.ONCALL_TEAM,
+      };
+    }
+
+    if (record.context?.userId) {
+      return {
+        user_tier: getUserTier(record.context.userId),
+      };
+    }
+
+    return undefined; // No enrichment
+  },
+})
+```
+
+## Filter Plugin
+
+Filter logs based on custom criteria.
+
+### Basic Usage
+
+```typescript
+import { createLogger, filterPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    filterPlugin({
+      // Only log errors and above
+      minLevel: "error",
+
+      // Custom filter function
+      filter: (record) => {
+        // Drop health check logs
+        if (record.msg.includes("health check")) {
+          return false;
+        }
+
+        // Drop logs without userId
+        if (!record.context?.userId) {
+          return false;
+        }
+
+        return true;
+      },
+    }),
+  ],
+});
+```
+
+### Options
+
+```typescript
+type FilterPluginOptions = {
+  // Minimum level to log
+  minLevel?: LogLevel;
+
+  // Custom filter function (return false to drop)
+  filter?: (record: LogRecord) => boolean;
+
+  // Patterns to exclude
+  excludePatterns?: RegExp[];
+
+  // Paths to require in context
+  requirePaths?: string[];
+
+  // Drop duplicate messages
+  deduplicate?: boolean;
+  deduplicateWindow?: number; // ms
+};
+```
+
+### Advanced Usage
+
+#### Time Window Filtering
+
+```typescript
+timeWindowFilterPlugin({
+  start: "08:00",   // Start time (HH:mm)
+  end: "18:00",     // End time (HH:mm)
+  timezone: "America/New_York",
+  outside: false,   // Log during window (not outside)
+})
+```
+
+#### Pattern-Based Filtering
+
+```typescript
+filterPlugin({
+  excludePatterns: [
+    /health.*check/i,
+    /metrics.*endpoint/i,
+    /^OPTIONS /,
+  ],
+})
+```
+
+## Batching Plugin
+
+Batch logs before sending to improve performance.
+
+### Basic Usage
+
+```typescript
+import { createLogger, batchingPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    batchingPlugin({
+      batchSize: 100,      // Max records per batch
+      flushInterval: 5000, // Flush every 5 seconds
+      onFlush: async (records) => {
+        // Send batch to external service
+        await sendToDatadog(records);
+      },
+    }),
+  ],
+});
+```
+
+### Options
+
+```typescript
+type BatchingPluginOptions = {
+  // Maximum records per batch
+  batchSize?: number; // Default: 100
+
+  // Flush interval in milliseconds
+  flushInterval?: number; // Default: 5000
+
+  // Callback when batch is flushed
+  onFlush: (records: LogRecord[]) => void | Promise<void>;
+
+  // Flush on process exit
+  flushOnExit?: boolean; // Default: true
+
+  // Maximum memory usage (bytes)
+  maxMemory?: number;
+};
+```
+
+### Advanced Usage
+
+#### HTTP Batching
+
+```typescript
+httpBatchingPlugin({
+  url: "https://logs.example.com/ingest",
+  batchSize: 100,
+  flushInterval: 5000,
+  headers: {
+    "Authorization": `Bearer ${process.env.API_KEY}`,
+    "Content-Type": "application/json",
+  },
+  transform: (records) => ({
+    records: records.map(r => ({
+      timestamp: r.time,
+      level: r.level,
+      message: r.msg,
+      ...r.context,
+    })),
+  }),
+})
+```
+
+## Redaction Plugin
+
+Redact sensitive data from logs (see [Redaction Guide](/docs/features/redaction) for details).
+
+### Basic Usage
+
+```typescript
+import { createLogger, redactionPlugin } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    redactionPlugin({
+      paths: ["password", "ssn", "creditCard"],
+      patterns: [
+        {
+          pattern: /Bearer\s+\S+/g,
+          replacement: "Bearer [REDACTED]",
+        },
+      ],
+    }),
+  ],
+});
+```
+
+### Strict Redaction
+
+Fail-safe redaction that blocks logs if redaction fails:
+
+```typescript
+strictRedactionPlugin({
+  paths: ["password", "apiKey"],
+  onRedactionFailure: (error, record) => {
+    console.error("Redaction failed:", error);
+    metricsClient.increment("redaction.failures");
+  },
+})
+```
+
+## Metrics Plugin
+
+Track logging metrics.
+
+### Basic Usage
+
+```typescript
+import { createLogger, metricsPlugin, createConsoleMetricsCollector } from "cenglu";
+
+const logger = createLogger({
+  plugins: [
+    metricsPlugin({
+      collector: createConsoleMetricsCollector(),
+      reportInterval: 60000, // Report every minute
+      trackLevels: true,
+      trackErrors: true,
+      trackDuration: true,
+    }),
+  ],
+});
+```
+
+### Custom Metrics Collector
+
+```typescript
+import type { MetricsCollector } from "cenglu";
+
+const datadogCollector: MetricsCollector = {
+  increment(metric, value, tags) {
+    dogstatsd.increment(metric, value, tags);
+  },
+  gauge(metric, value, tags) {
+    dogstatsd.gauge(metric, value, tags);
+  },
+  histogram(metric, value, tags) {
+    dogstatsd.histogram(metric, value, tags);
+  },
+};
+
+metricsPlugin({
+  collector: datadogCollector,
+  reportInterval: 10000,
+})
+```
+
+## Plugin Composition
+
+Combine multiple plugins:
+
+```typescript
+const logger = createLogger({
+  plugins: [
+    // Order matters! Lower order runs first
+    samplingPlugin({ rates: { debug: 0.1 }, order: 5 }),
+    rateLimitPlugin({ maxLogs: 1000, order: 10 }),
+    redactionPlugin({ enabled: true, order: 15 }),
+    enrichPlugin({ addProcessInfo: true, order: 20 }),
+    filterPlugin({ minLevel: "info", order: 25 }),
+    batchingPlugin({ batchSize: 100, order: 30 }),
+    metricsPlugin({ reportInterval: 60000, order: 100 }),
+  ],
+});
+```
+
+### Plugin Execution Order
+
+Plugins execute in order:
+
+1. **onRecord**: Transform or filter records
+2. **onFormat**: Modify formatted output
+3. **onWrite**: Post-write hooks
+4. **onFlush**: Flush operations
+5. **onClose**: Cleanup
+
+Lower `order` values run first (default: 100).
+
+## Performance Impact
+
+| Plugin | Overhead per Log | Memory Usage |
+|--------|------------------|--------------|
+| Sampling | ~0.001ms | Minimal |
+| Rate Limit | ~0.002ms | O(keys) |
+| Enrichment | ~0.003ms | Minimal |
+| Filter | ~0.002ms | Minimal |
+| Batching | ~0.001ms | O(batchSize) |
+| Redaction | ~0.005ms | Minimal |
+| Metrics | ~0.002ms | Minimal |
+
+## Next Steps
+
+- [Creating Plugins](/docs/plugins/creating-plugins) - Build custom plugins
+- [Plugin Examples](/docs/plugins/examples) - Real-world plugin examples
+- [Configuration](/docs/getting-started/configuration) - Configure plugins
