@@ -1,0 +1,132 @@
+---
+title: Installation
+description: Install and set up cenglu in your Node.js project
+---
+
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+# Installation
+
+## Requirements
+
+Cenglu requires **Node.js 18.0.0 or higher**. It works with any modern Node.js runtime including:
+
+- Node.js (18+)
+- Bun
+- Deno (with Node compatibility)
+
+## Package Manager
+
+Install cenglu using your preferred package manager:
+
+<Tabs items={['npm', 'yarn', 'pnpm', 'bun']}>
+  <Tab value="npm">
+    ```bash
+    npm install cenglu
+    ```
+  </Tab>
+  <Tab value="yarn">
+    ```bash
+    yarn add cenglu
+    ```
+  </Tab>
+  <Tab value="pnpm">
+    ```bash
+    pnpm add cenglu
+    ```
+  </Tab>
+  <Tab value="bun">
+    ```bash
+    bun add cenglu
+    ```
+  </Tab>
+</Tabs>
+
+## Verify Installation
+
+Create a simple test file to verify the installation:
+
+```typescript title="test-logger.ts"
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  service: "test-app",
+  level: "info",
+});
+
+logger.info("Cenglu installed successfully!", { version: "2.2.0" });
+```
+
+Run the file:
+
+```bash
+node test-logger.ts
+# or
+bun test-logger.ts
+```
+
+You should see output similar to:
+
+```json
+{"time":1704067200000,"level":"info","msg":"Cenglu installed successfully!","context":{"version":"2.2.0"},"service":"test-app"}
+```
+
+## TypeScript Configuration
+
+Cenglu is written in TypeScript and includes comprehensive type definitions. For the best experience, ensure your `tsconfig.json` includes:
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "types": ["node"]
+  }
+}
+```
+
+## Import Paths
+
+Cenglu exports different modules through subpath imports:
+
+```typescript
+// Core logger
+import { createLogger, Logger } from "cenglu";
+
+// Middleware
+import { expressMiddleware } from "cenglu/middleware";
+import { nestjsMiddleware } from "cenglu/middleware";
+
+// Plugins
+import { samplingPlugin, rateLimitPlugin } from "cenglu/plugins";
+
+// Transports
+import { createFileTransport, createConsoleTransport } from "cenglu/transports";
+
+// Redaction
+import { createRedactor, createPCIRedactor } from "cenglu/redaction";
+
+// Context utilities
+import { withContext, createRequestContext } from "cenglu/context";
+
+// Format utilities
+import { formatEcs, formatDatadog } from "cenglu/format";
+```
+
+## Bundle Size
+
+Cenglu is designed to be lightweight with **zero external dependencies**:
+
+- **Production bundle**: < 500KB
+- **Tree-shakeable**: Only import what you use
+- **No transitive dependencies**: No hidden dependency bloat
+
+Check bundle size in your project:
+
+```bash
+npm install -g size-limit
+size-limit
+```

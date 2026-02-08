@@ -1,0 +1,324 @@
+---
+title: Basic Usage
+description: Learn the fundamentals of using cenglu logger
+---
+
+# Basic Usage
+
+## Creating a Logger
+
+The most basic way to create a logger:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger();
+
+logger.info("Hello, world!");
+```
+
+With configuration:
+
+```typescript
+const logger = createLogger({
+  service: "my-app",
+  level: "info",
+  env: "production",
+  version: "1.0.0",
+});
+```
+
+## Log Levels
+
+Cenglu supports six log levels (in order of severity):
+
+```typescript
+logger.trace("Detailed debug information");
+logger.debug("Debug information");
+logger.info("Informational message");
+logger.warn("Warning message");
+logger.error("Error occurred");
+logger.fatal("Fatal error - application crash");
+```
+
+### Setting Log Level
+
+Control which logs are output:
+
+```typescript
+const logger = createLogger({
+  level: "info", // Only info, warn, error, fatal will be logged
+});
+
+logger.debug("This won't be logged"); // Skipped
+logger.info("This will be logged"); // Logged
+```
+
+### Dynamic Level Changes
+
+Change log level at runtime:
+
+```typescript
+logger.setLevel("debug");
+console.log(logger.getLevel()); // "debug"
+
+// Check if level is enabled before expensive operations
+if (logger.isLevelEnabled("debug")) {
+  const expensiveDebugData = computeExpensiveData();
+  logger.debug("Debug data", expensiveDebugData);
+}
+```
+
+## Logging with Context
+
+Add structured context to your logs:
+
+```typescript
+// Simple context
+logger.info("User logged in", {
+  userId: 123,
+  username: "john"
+});
+
+// Nested context
+logger.info("Order processed", {
+  order: {
+    id: "order-123",
+    total: 99.99,
+    items: [
+      { id: 1, name: "Product A", qty: 2 },
+    ],
+  },
+});
+```
+
+Output:
+```json
+{
+  "time": 1704067200000,
+  "level": "info",
+  "msg": "User logged in",
+  "context": {
+    "userId": 123,
+    "username": "john"
+  }
+}
+```
+
+## Logging Errors
+
+Log errors with proper stack traces:
+
+```typescript
+try {
+  await riskyOperation();
+} catch (error) {
+  logger.error("Operation failed", error);
+}
+```
+
+With additional context:
+
+```typescript
+try {
+  await processPayment(orderId);
+} catch (error) {
+  logger.error("Payment failed", error, {
+    orderId,
+    attemptCount: 3
+  });
+}
+```
+
+Error output includes:
+```json
+{
+  "time": 1704067200000,
+  "level": "error",
+  "msg": "Payment failed",
+  "err": {
+    "name": "PaymentError",
+    "message": "Insufficient funds",
+    "stack": "PaymentError: Insufficient funds\n    at processPayment...",
+    "code": "INSUFFICIENT_FUNDS"
+  },
+  "context": {
+    "orderId": "order-123",
+    "attemptCount": 3
+  }
+}
+```
+
+## Child Loggers
+
+Create child loggers that inherit configuration and share transports:
+
+```typescript
+const logger = createLogger({ service: "api" });
+
+// Child logger with additional context
+const userLogger = logger.child({ module: "users" });
+userLogger.info("User created", { userId: 123 });
+// Output includes both "service": "api" and "module": "users"
+
+// Nested child loggers
+const requestLogger = userLogger.child({ requestId: "abc-123" });
+requestLogger.info("Processing request");
+// Output includes all parent context
+```
+
+Output:
+```json
+{
+  "level": "info",
+  "msg": "User created",
+  "context": { "userId": 123 },
+  "service": "api",
+  "module": "users"
+}
+```
+
+## Bound Loggers
+
+Create lightweight loggers with temporary context bindings:
+
+```typescript
+// Using .with() for single-use context
+logger.with({ userId: 123 }).info("User action", { action: "login" });
+
+// Chain multiple with() calls
+logger
+  .with({ userId: 123 })
+  .with({ sessionId: "sess-abc" })
+  .info("User authenticated");
+
+// Use in functions
+function processUserAction(userId: number, action: string) {
+  const log = logger.with({ userId, action });
+
+  log.info("Starting action");
+  // ... do work ...
+  log.info("Action completed");
+}
+```
+
+**When to use `.child()` vs `.with()`:**
+
+| Feature | `.child()` | `.with()` |
+|---------|-----------|----------|
+| Shares transports | ✅ | ✅ |
+| Permanent bindings | ✅ | ❌ |
+| Creates new instance | ✅ | ❌ |
+| Performance | Heavier | Lighter |
+| Use case | Long-lived loggers | Temporary context |
+
+## Performance Timing
+
+Measure operation duration:
+
+```typescript
+const done = logger.time("database-query");
+
+await db.query("SELECT * FROM users");
+
+done(); // Logs: "database-query completed" { durationMs: 42 }
+```
+
+Advanced timer usage:
+
+```typescript
+const timer = logger.time("process-data");
+
+const result = await processData();
+
+// Option 1: Simple end
+timer.end();
+
+// Option 2: End with context
+timer.endWithContext({
+  recordsProcessed: result.count
+});
+
+// Option 3: Get elapsed time without logging
+const elapsed = timer.elapsed();
+console.log(`Took ${elapsed}ms`);
+```
+
+With initial context:
+
+```typescript
+const done = logger.time("api-request", {
+  endpoint: "/users",
+  method: "GET"
+});
+
+await fetch("https://api.example.com/users");
+
+done.endWithContext({
+  statusCode: 200,
+  recordCount: 50
+});
+```
+
+## Conditional Logging
+
+Guard expensive operations with level checks:
+
+```typescript
+// Bad - always computes expensive data
+logger.debug("Debug data", computeExpensiveData());
+
+// Good - only computes if debug is enabled
+logger.ifDebug(() => {
+  return ["Debug data", computeExpensiveData()];
+});
+
+// Available for all levels
+logger.ifTrace(() => ["Trace", data]);
+logger.ifDebug(() => ["Debug", data]);
+logger.ifInfo(() => ["Info", data]);
+```
+
+## Dynamic Level Logging
+
+Log at a dynamic level:
+
+```typescript
+function logMessage(level: LogLevel, message: string) {
+  logger.logAt(level, message, { timestamp: Date.now() });
+}
+
+logMessage("info", "Application started");
+logMessage("error", "Application crashed");
+```
+
+## Graceful Shutdown
+
+Ensure all logs are written before process exit:
+
+```typescript
+process.on("SIGINT", async () => {
+  console.log("Shutting down...");
+
+  // Flush all pending logs
+  await logger.flush();
+
+  // Close transports and plugins
+  await logger.close();
+
+  process.exit(0);
+});
+```
+
+For child loggers:
+
+```typescript
+// Only close the parent logger
+const parent = createLogger({ service: "app" });
+const child = parent.child({ module: "users" });
+
+// On shutdown - only close parent
+await parent.flush();
+await parent.close();
+// Do NOT close child loggers - they share resources
+```

@@ -1,0 +1,536 @@
+---
+title: Common Issues
+description: Solutions to common problems when using cenglu
+---
+
+# Troubleshooting Guide
+
+Common issues and their solutions when using cenglu.
+
+## Logs Not Showing
+
+### Issue: No logs are being output
+
+**Symptoms:**
+- Calling `logger.info()` produces no output
+- Console is empty
+
+**Solutions:**
+
+1. **Check log level**
+
+   ```typescript
+   const logger = createLogger({ level: "info" });
+
+   console.log(logger.getLevel()); // Check current level
+
+   // Debug logs won't show if level is "info"
+   logger.debug("This won't show");
+   logger.info("This will show");
+   ```
+
+2. **Verify logger is created**
+
+   ```typescript
+   // Bad: Logger not assigned
+   createLogger({ service: "app" });
+   logger.info("Won't work"); // ❌ logger is undefined
+
+   // Good: Assign logger
+   const logger = createLogger({ service: "app" });
+   logger.info("Works"); // ✅
+   ```
+
+3. **Check transport configuration**
+
+   ```typescript
+   // Console transport is enabled by default
+   const logger = createLogger({
+     console: {
+       enabled: true, // Ensure this is true
+     },
+   });
+   ```
+
+4. **Flush before exit**
+
+   ```typescript
+   logger.info("Last message");
+
+   // Flush before process exits
+   await logger.flush();
+   process.exit(0);
+   ```
+
+## TypeScript Errors
+
+### Issue: Type errors with logger methods
+
+**Symptoms:**
+- `Property 'logger' does not exist on type 'Request'`
+- Type mismatches
+
+**Solutions:**
+
+1. **Add type augmentation for Express**
+
+   ```typescript title="src/types/express.d.ts"
+   import type { Logger } from "cenglu";
+
+   declare global {
+     namespace Express {
+       interface Request {
+         logger: Logger;
+         correlationId: string;
+       }
+     }
+   }
+   ```
+
+2. **Use correct import paths**
+
+   ```typescript
+   // Good
+   import { createLogger } from "cenglu";
+   import { expressMiddleware } from "cenglu/middleware";
+
+   // Bad
+   import { createLogger, expressMiddleware } from "cenglu"; // ❌
+   ```
+
+3. **Check TypeScript configuration**
+
+   ```json title="tsconfig.json"
+   {
+     "compilerOptions": {
+       "types": ["node"],
+       "esModuleInterop": true,
+       "moduleResolution": "bundler"
+     }
+   }
+   ```
+
+## Performance Issues
+
+### Issue: Logging is slow / high memory usage
+
+**Symptoms:**
+- Application is slower with logging enabled
+- Memory usage increasing over time
+- CPU usage high
+
+**Solutions:**
+
+1. **Use appropriate log level**
+
+   ```typescript
+   // Production: Use "info" or higher
+   const logger = createLogger({
+     level: process.env.NODE_ENV === "production" ? "info" : "debug",
+   });
+   ```
+
+2. **Enable sampling for verbose logs**
+
+   ```typescript
+   import { createLogger, samplingPlugin } from "cenglu";
+
+   const logger = createLogger({
+     plugins: [
+       samplingPlugin({
+         rates: {
+           trace: 0.01, // Only 1% of trace logs
+           debug: 0.1,  // Only 10% of debug logs
+         },
+       }),
+     ],
+   });
+   ```
+
+3. **Guard expensive operations**
+
+   ```typescript
+   // Bad: Always computes expensive data
+   logger.debug("Data", computeExpensiveData());
+
+   // Good: Only computes if debug is enabled
+   if (logger.isLevelEnabled("debug")) {
+     logger.debug("Data", computeExpensiveData());
+   }
+
+   // Better: Use ifDebug helper
+   logger.ifDebug(() => {
+     return ["Data", computeExpensiveData()];
+   });
+   ```
+
+4. **Limit context size**
+
+   ```typescript
+   // Bad: Logging large objects
+   logger.info("Request", {
+     body: largeRequestBody, // Could be MBs
+     headers: allHeaders,
+   });
+
+   // Good: Log only necessary data
+   logger.info("Request", {
+     bodySize: largeRequestBody.length,
+     contentType: headers["content-type"],
+   });
+   ```
+
+5. **Configure file rotation**
+
+   ```typescript
+   const logger = createLogger({
+     file: {
+       enabled: true,
+       rotation: {
+         maxBytes: 10485760, // 10MB
+         maxFiles: 5,
+         compress: "gzip",
+       },
+     },
+   });
+   ```
+
+## Memory Leaks
+
+### Issue: Memory usage grows indefinitely
+
+**Symptoms:**
+- Memory increases over time
+- Process crashes with OOM error
+
+**Solutions:**
+
+1. **Close logger on shutdown**
+
+   ```typescript
+   const logger = createLogger({...});
+
+   process.on("SIGTERM", async () => {
+     await logger.flush();
+     await logger.close(); // Important!
+     process.exit(0);
+   });
+   ```
+
+2. **Don't close child loggers**
+
+   ```typescript
+   const parent = createLogger({...});
+   const child = parent.child({...});
+
+   // On shutdown
+   await parent.close(); // ✅ Close parent only
+   // await child.close(); // ❌ Never close child
+   ```
+
+3. **Configure buffer limits**
+
+   ```typescript
+   import { createBufferedConsoleTransport } from "cenglu";
+
+   const logger = createLogger({
+     transports: [
+       createBufferedConsoleTransport({
+         bufferSize: 100, // Limit buffer size
+         flushInterval: 1000,
+       }),
+     ],
+   });
+   ```
+
+4. **Check plugin memory usage**
+
+   ```typescript
+   // Bad: Plugin stores all records
+   const myPlugin = {
+     name: "memory-leak",
+     records: [] as any[],
+     onWrite(record: any) {
+       this.records.push(record); // Memory leak!
+     },
+   };
+
+   // Good: Plugin processes without storing
+   const myPlugin = {
+     name: "safe",
+     onWrite(record: any) {
+       processRecord(record); // Process immediately
+     },
+   };
+   ```
+
+## Middleware Issues
+
+### Issue: Request logger missing context
+
+**Symptoms:**
+- `req.logger` is undefined
+- Correlation ID missing from logs
+
+**Solutions:**
+
+1. **Apply middleware before routes**
+
+   ```typescript
+   import express from "express";
+   import { createLogger, expressMiddleware } from "cenglu";
+
+   const app = express();
+   const logger = createLogger({...});
+
+   // Apply middleware FIRST
+   app.use(expressMiddleware(logger));
+
+   // Then define routes
+   app.get("/users", (req, res) => {
+     req.logger.info("Fetching users"); // ✅ Works
+   });
+   ```
+
+2. **Check middleware configuration**
+
+   ```typescript
+   app.use(expressMiddleware(logger, {
+     loggerProperty: "logger", // Default property name
+   }));
+
+   // Access via correct property
+   req.logger.info("Works");
+   ```
+
+3. **Verify AsyncLocalStorage is enabled**
+
+   ```typescript
+   const logger = createLogger({
+     useAsyncContext: true, // Required for context propagation
+   });
+
+   app.use(expressMiddleware(logger, {
+     useAsyncContext: true,
+   }));
+   ```
+
+## Redaction Not Working
+
+### Issue: Sensitive data still appears in logs
+
+**Symptoms:**
+- Passwords, API keys visible in logs
+- Redaction patterns not matching
+
+**Solutions:**
+
+1. **Verify redaction is enabled**
+
+   ```typescript
+   const logger = createLogger({
+     redaction: {
+       enabled: true, // Must be explicitly enabled
+     },
+   });
+   ```
+
+2. **Check pattern syntax**
+
+   ```typescript
+   // Bad: Missing /g flag
+   {
+     pattern: /password:\s*\S+/,
+     replacement: "password: [REDACTED]",
+   }
+
+   // Good: Include /g flag
+   {
+     pattern: /password:\s*\S+/g,
+     replacement: "password: [REDACTED]",
+   }
+   ```
+
+3. **Use path-based redaction for objects**
+
+   ```typescript
+   const logger = createLogger({
+     redaction: {
+       enabled: true,
+       paths: ["password", "apiKey", "user.password"],
+     },
+   });
+
+   logger.info("User data", {
+     username: "john",
+     password: "secret", // Will be redacted
+   });
+   ```
+
+4. **Test redaction**
+
+   ```typescript
+   import { createRedactor } from "cenglu";
+
+   const redactor = createRedactor({
+     paths: ["password"],
+   });
+
+   const data = { password: "secret123" };
+   const redacted = redactor.redact(data);
+
+   console.log(redacted); // { password: "[REDACTED]" }
+   ```
+
+## File Transport Issues
+
+### Issue: Logs not written to file
+
+**Symptoms:**
+- No log files created
+- Log directory empty
+
+**Solutions:**
+
+1. **Enable file transport**
+
+   ```typescript
+   const logger = createLogger({
+     file: {
+       enabled: true, // Must be enabled
+       dir: "./logs",
+     },
+   });
+   ```
+
+2. **Check directory permissions**
+
+   ```bash
+   # Ensure log directory exists and is writable
+   mkdir -p ./logs
+   chmod 755 ./logs
+   ```
+
+3. **Verify file path**
+
+   ```typescript
+   import path from "path";
+
+   const logger = createLogger({
+     file: {
+       enabled: true,
+       dir: path.join(__dirname, "logs"), // Absolute path
+     },
+   });
+   ```
+
+4. **Check for errors**
+
+   ```typescript
+   const logger = createLogger({
+     file: {
+       enabled: true,
+       dir: "./logs",
+     },
+   });
+
+   // Listen for transport errors
+   process.on("uncaughtException", (error) => {
+     console.error("Transport error:", error);
+   });
+   ```
+
+## Circular Reference Errors
+
+### Issue: "Converting circular structure to JSON"
+
+**Symptoms:**
+- Error when logging objects with circular references
+- JSON.stringify errors
+
+**Solutions:**
+
+1. **Use error serialization**
+
+   ```typescript
+   // Bad: Direct error logging
+   logger.info("Error data", { error }); // May have circular refs
+
+   // Good: Use error parameter
+   logger.error("Error occurred", error);
+   ```
+
+2. **Extract specific properties**
+
+   ```typescript
+   // Bad: Log entire object
+   logger.info("Request", { req }); // Has circular refs
+
+   // Good: Extract specific properties
+   logger.info("Request", {
+     method: req.method,
+     path: req.path,
+     headers: req.headers,
+   });
+   ```
+
+3. **Use custom transform**
+
+   ```typescript
+   function removeCircular(obj: any): any {
+     const seen = new WeakSet();
+     return JSON.parse(JSON.stringify(obj, (key, value) => {
+       if (typeof value === "object" && value !== null) {
+         if (seen.has(value)) return "[Circular]";
+         seen.add(value);
+       }
+       return value;
+     }));
+   }
+
+   logger.info("Data", removeCircular(complexObject));
+   ```
+
+## Child Logger Issues
+
+### Issue: Child logger changes don't affect parent
+
+**Symptoms:**
+- Setting child logger level doesn't work as expected
+- Child and parent have different outputs
+
+**Explanation:**
+
+Child loggers share transports and configuration but have independent state:
+
+```typescript
+const parent = createLogger({ level: "info" });
+const child = parent.child({ module: "users" });
+
+// Each has independent level
+child.setLevel("debug");
+console.log(parent.getLevel()); // "info"
+console.log(child.getLevel());  // "debug"
+```
+
+**Solution:**
+
+Set level on parent to affect all children:
+
+```typescript
+parent.setLevel("debug"); // Affects parent only
+// Children maintain their own levels
+```
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. **Check GitHub Issues**: [github.com/ayungavis/cenglu/issues](https://github.com/ayungavis/cenglu/issues)
+2. **Create Minimal Reproduction**: Simplify your code to isolate the issue
+3. **Include Details**:
+   - cenglu version
+   - Node.js/Bun version
+   - Operating system
+   - Error messages
+   - Code sample

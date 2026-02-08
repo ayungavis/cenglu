@@ -1,0 +1,478 @@
+---
+title: Express Middleware
+description: Integrate cenglu with Express.js applications
+---
+
+# Express Middleware
+
+Cenglu provides comprehensive middleware for Express.js with automatic request logging, correlation ID tracking, and context propagation.
+
+## Installation
+
+```typescript
+import express from "express";
+import { createLogger, expressMiddleware } from "cenglu";
+```
+
+## Basic Usage
+
+```typescript
+import express from "express";
+import { createLogger, expressMiddleware } from "cenglu";
+
+const app = express();
+const logger = createLogger({ service: "api" });
+
+// Apply middleware
+app.use(expressMiddleware(logger));
+
+app.get("/users/:id", (req, res) => {
+  // Logger is automatically attached to req with request context
+  req.logger.info("Fetching user", { userId: req.params.id });
+
+  res.json({ id: req.params.id, name: "John Doe" });
+});
+
+app.listen(3000);
+```
+
+## Automatic Features
+
+The middleware automatically:
+
+- ✅ Generates or extracts correlation IDs
+- ✅ Logs incoming requests
+- ✅ Logs outgoing responses with duration
+- ✅ Attaches logger to `req.logger`
+- ✅ Attaches correlation ID to `req.correlationId`
+- ✅ Sets correlation ID response header
+- ✅ Uses AsyncLocalStorage for context propagation
+- ✅ Determines log level based on status code
+
+## Configuration Options
+
+```typescript
+app.use(expressMiddleware(logger, {
+  // Logging control
+  logRequests: true,         // Log incoming requests
+  logResponses: true,        // Log outgoing responses
+
+  // Data inclusion
+  includeHeaders: false,     // Include request headers (may contain sensitive data)
+  includeQuery: true,        // Include query parameters
+  includeBody: false,        // Include request body (requires body-parser)
+  includeResponseBody: false, // Include response body
+  maxResponseBodyLength: 1000,
+
+  // Correlation ID
+  correlationIdHeader: "x-correlation-id",
+  correlationIdFallbackHeaders: ["x-request-id", "request-id"],
+  generateCorrelationId: () => crypto.randomUUID(),
+  setCorrelationIdHeader: true,
+
+  // Path filtering
+  ignorePaths: ["/health", "/ready", /^\/metrics/],
+  skip: (req, res) => req.path === "/internal",
+
+  // Security
+  redactHeaders: ["authorization", "cookie", "set-cookie", "x-api-key"],
+
+  // Log levels
+  successLevel: "info",      // 2xx, 3xx
+  clientErrorLevel: "warn",  // 4xx
+  serverErrorLevel: "error", // 5xx
+
+  // Advanced
+  useAsyncContext: true,
+  loggerProperty: "logger",
+  correlationIdProperty: "correlationId",
+
+  // Custom messages
+  requestMessage: (req) => `${req.method} ${req.path}`,
+  responseMessage: (req, res, duration) =>
+    `${req.method} ${req.path} ${res.statusCode} ${duration}ms`,
+
+  // Custom context
+  getRequestContext: (req) => ({
+    userId: req.user?.id,
+  }),
+  getResponseContext: (req, res, duration) => ({
+    cached: res.getHeader("x-cache") === "HIT",
+  }),
+}));
+```
+
+## Request Logging
+
+### Default Request Log
+
+```json
+{
+  "level": "info",
+  "msg": "GET /users/123",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "context": {
+    "url": "/users/123?includeDetails=true",
+    "query": { "includeDetails": "true" },
+    "params": { "id": "123" }
+  }
+}
+```
+
+### With Headers
+
+```typescript
+app.use(expressMiddleware(logger, {
+  includeHeaders: true,
+  redactHeaders: ["authorization", "cookie"],
+}));
+```
+
+Output:
+```json
+{
+  "level": "info",
+  "msg": "GET /users/123",
+  "context": {
+    "url": "/users/123",
+    "headers": {
+      "user-agent": "Mozilla/5.0...",
+      "authorization": "[REDACTED]",
+      "content-type": "application/json"
+    }
+  }
+}
+```
+
+## Response Logging
+
+### Default Response Log
+
+```json
+{
+  "level": "info",
+  "msg": "GET /users/123 200 42ms",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "method": "GET",
+  "path": "/users/123",
+  "context": {
+    "statusCode": 200,
+    "duration": 42
+  }
+}
+```
+
+### Log Levels by Status Code
+
+```typescript
+app.use(expressMiddleware(logger, {
+  successLevel: "info",      // 200-399
+  clientErrorLevel: "warn",  // 400-499
+  serverErrorLevel: "error", // 500-599
+}));
+```
+
+**Status Code Mapping:**
+- `200-399` → `info` (configurable with `successLevel`)
+- `400-499` → `warn` (configurable with `clientErrorLevel`)
+- `500-599` → `error` (configurable with `serverErrorLevel`)
+
+## Correlation IDs
+
+### Automatic Generation
+
+```typescript
+app.use(expressMiddleware(logger, {
+  correlationIdHeader: "x-correlation-id",
+  generateCorrelationId: () => crypto.randomUUID(),
+}));
+
+app.get("/users", (req, res) => {
+  console.log(req.correlationId); // "550e8400-e29b-41d4-a716-446655440000"
+
+  // All logs include correlation ID
+  req.logger.info("Processing request");
+
+  res.json({ users: [] });
+});
+```
+
+### Extract from Incoming Headers
+
+```typescript
+app.use(expressMiddleware(logger, {
+  correlationIdHeader: "x-correlation-id",
+  correlationIdFallbackHeaders: ["x-request-id", "request-id"],
+}));
+```
+
+**Header Priority:**
+1. Primary header (`x-correlation-id`)
+2. Fallback headers in order
+3. Generate new ID if not found
+
+### Propagate to Downstream Services
+
+```typescript
+app.get("/users", async (req, res) => {
+  const response = await fetch("https://api.example.com/users", {
+    headers: {
+      "x-correlation-id": req.correlationId, // Propagate
+    },
+  });
+
+  req.logger.info("Fetched users", {
+    count: response.data.length,
+  });
+
+  res.json(response.data);
+});
+```
+
+## Path Filtering
+
+### Ignore Specific Paths
+
+```typescript
+app.use(expressMiddleware(logger, {
+  ignorePaths: [
+    "/health",           // Exact match
+    "/metrics",          // Exact match
+    /^\/internal\//,     // Regex pattern
+  ],
+}));
+```
+
+### Custom Skip Logic
+
+```typescript
+app.use(expressMiddleware(logger, {
+  skip: (req, res) => {
+    // Skip OPTIONS requests
+    if (req.method === "OPTIONS") return true;
+
+    // Skip static assets
+    if (req.path.startsWith("/static/")) return true;
+
+    // Skip based on header
+    if (req.headers["x-skip-logging"]) return true;
+
+    return false;
+  },
+}));
+```
+
+## Custom Context
+
+### Request Context
+
+Add custom data to request logs:
+
+```typescript
+app.use(expressMiddleware(logger, {
+  getRequestContext: (req) => ({
+    userId: req.user?.id,
+    tenantId: req.headers["x-tenant-id"],
+    clientVersion: req.headers["x-client-version"],
+  }),
+}));
+```
+
+### Response Context
+
+Add custom data to response logs:
+
+```typescript
+app.use(expressMiddleware(logger, {
+  getResponseContext: (req, res, duration) => ({
+    cached: res.getHeader("x-cache-status") === "HIT",
+    compressionUsed: !!res.getHeader("content-encoding"),
+    responseSize: res.getHeader("content-length"),
+  }),
+}));
+```
+
+## Custom Messages
+
+### Request Messages
+
+```typescript
+app.use(expressMiddleware(logger, {
+  requestMessage: (req) => {
+    const userId = req.user?.id || "anonymous";
+    return `[${userId}] ${req.method} ${req.path}`;
+  },
+}));
+```
+
+### Response Messages
+
+```typescript
+app.use(expressMiddleware(logger, {
+  responseMessage: (req, res, duration) => {
+    const status = res.statusCode >= 400 ? "FAILED" : "SUCCESS";
+    return `[${status}] ${req.method} ${req.path} - ${duration}ms`;
+  },
+}));
+```
+
+## Error Handling
+
+### Error Middleware
+
+Use the error middleware to catch and log unhandled errors:
+
+```typescript
+import { expressMiddleware, expressErrorMiddleware } from "cenglu";
+
+// Regular middleware first
+app.use(expressMiddleware(logger));
+
+// Your routes
+app.get("/users", (req, res) => {
+  throw new Error("Something went wrong");
+});
+
+// Error middleware LAST (after all routes)
+app.use(expressErrorMiddleware(logger, {
+  includeStack: process.env.NODE_ENV !== "production",
+  formatError: (err, req) => ({
+    error: {
+      message: err.message,
+      code: err.code,
+      correlationId: req.correlationId,
+    },
+  }),
+  continueOnError: false, // Set true to continue to next error handler
+}));
+```
+
+### Error Log Output
+
+```json
+{
+  "level": "error",
+  "msg": "Request error",
+  "correlationId": "550e8400-e29b-41d4-a716-446655440000",
+  "err": {
+    "name": "Error",
+    "message": "Something went wrong",
+    "stack": "Error: Something went wrong\n    at /app/routes.js:42:11"
+  },
+  "context": {
+    "statusCode": 500,
+    "path": "/users",
+    "method": "GET"
+  }
+}
+```
+
+## AsyncLocalStorage Context
+
+Enable context propagation across async operations:
+
+```typescript
+app.use(expressMiddleware(logger, {
+  useAsyncContext: true, // Default: true
+}));
+
+app.get("/users", async (req, res) => {
+  // Context is preserved across awaits
+  await someAsyncOperation();
+
+  // These logs still have request context
+  req.logger.info("Operation completed");
+
+  res.json({ users: [] });
+});
+
+async function someAsyncOperation() {
+  // Can access context from anywhere in the call stack
+  const context = LoggerContext.get();
+  console.log(context?.correlationId);
+}
+```
+
+## Complete Example
+
+```typescript
+import express from "express";
+import bodyParser from "body-parser";
+import { createLogger, expressMiddleware, expressErrorMiddleware } from "cenglu";
+
+const app = express();
+const logger = createLogger({
+  service: "user-api",
+  env: process.env.NODE_ENV,
+  level: "info",
+  redaction: { enabled: true },
+});
+
+// Body parser (required for includeBody)
+app.use(bodyParser.json());
+
+// Logging middleware
+app.use(expressMiddleware(logger, {
+  logRequests: true,
+  logResponses: true,
+  includeQuery: true,
+  ignorePaths: ["/health", "/metrics"],
+  getRequestContext: (req) => ({
+    userId: req.user?.id,
+    tenantId: req.headers["x-tenant-id"],
+  }),
+}));
+
+// Routes
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
+app.get("/users/:id", async (req, res) => {
+  const timer = req.logger.time("fetch-user");
+
+  try {
+    const user = await fetchUser(req.params.id);
+    timer.endWithContext({ userId: user.id });
+
+    req.logger.info("User fetched successfully", { userId: user.id });
+    res.json(user);
+  } catch (error) {
+    req.logger.error("Failed to fetch user", error, {
+      userId: req.params.id,
+    });
+    res.status(404).json({ error: "User not found" });
+  }
+});
+
+app.post("/users", async (req, res) => {
+  req.logger.info("Creating user", { email: req.body.email });
+
+  try {
+    const user = await createUser(req.body);
+    req.logger.info("User created", { userId: user.id });
+
+    res.status(201).json(user);
+  } catch (error) {
+    req.logger.error("Failed to create user", error);
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+// Error middleware (last)
+app.use(expressErrorMiddleware(logger));
+
+// Graceful shutdown
+process.on("SIGTERM", async () => {
+  console.log("Shutting down...");
+  await logger.flush();
+  await logger.close();
+  process.exit(0);
+});
+
+app.listen(3000, () => {
+  logger.info("Server started", { port: 3000 });
+});
+```

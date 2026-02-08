@@ -1,0 +1,698 @@
+---
+title: Creating Plugins
+description: Learn how to create custom logger plugins
+---
+
+# Creating Plugins
+
+Plugins are the primary way to extend cenglu's functionality. This guide covers everything you need to know to create powerful custom plugins.
+
+## Plugin Interface
+
+A plugin is an object that implements the `LoggerPlugin` interface:
+
+```typescript
+type LoggerPlugin = {
+  readonly name: string;           // Unique plugin name
+  readonly order?: number;          // Execution order (default: 100)
+  onInit?(logger: Logger): void;    // Called once during logger init
+  onRecord?(record: LogRecord): LogRecord | null;  // Transform/filter records
+  onFormat?(record: LogRecord, formatted: string): string;  // Modify formatted output
+  onWrite?(record: LogRecord, formatted: string): void;     // Post-write hook
+  onFlush?(): Promise<void> | void; // Flush hook
+  onClose?(): Promise<void> | void; // Cleanup hook
+};
+```
+
+## Basic Plugin
+
+Let's create a simple plugin that adds a timestamp to all logs:
+
+```typescript
+import type { LoggerPlugin, LogRecord } from "cenglu";
+
+const timestampPlugin: LoggerPlugin = {
+  name: "timestamp",
+  order: 50,
+
+  onRecord(record: LogRecord): LogRecord {
+    return {
+      ...record,
+      context: {
+        ...record.context,
+        timestamp_iso: new Date(record.time).toISOString(),
+      },
+    };
+  },
+};
+
+// Use it
+const logger = createLogger({
+  plugins: [timestampPlugin],
+});
+```
+
+## Plugin Lifecycle Hooks
+
+### onInit()
+
+Called once when the logger is initialized. Use for setup.
+
+```typescript
+const setupPlugin: LoggerPlugin = {
+  name: "setup",
+
+  onInit(logger: Logger) {
+    console.log("Plugin initialized");
+
+    // Access logger properties
+    console.log("Logger level:", logger.getLevel());
+
+    // Perform setup
+    this.connection = setupConnection();
+  },
+
+  // Clean up in onClose
+  async onClose() {
+    await this.connection?.close();
+  },
+};
+```
+
+### onRecord()
+
+Transform or filter log records. Return:
+- Modified `LogRecord` to transform
+- `null` to drop the log
+- `undefined` to keep unchanged
+
+```typescript
+const filterPlugin: LoggerPlugin = {
+  name: "filter",
+  order: 10, // Run early
+
+  onRecord(record: LogRecord): LogRecord | null {
+    // Drop logs without userId
+    if (!record.context?.userId) {
+      return null; // Log is dropped
+    }
+
+    // Add custom field
+    return {
+      ...record,
+      context: {
+        ...record.context,
+        processed: true,
+      },
+    };
+  },
+};
+```
+
+### onFormat()
+
+Modify the formatted string before output.
+
+```typescript
+const uppercasePlugin: LoggerPlugin = {
+  name: "uppercase",
+
+  onFormat(record: LogRecord, formatted: string): string {
+    // Make all logs uppercase
+    return formatted.toUpperCase();
+  },
+};
+```
+
+### onWrite()
+
+Called after a log is written. Use for side effects.
+
+```typescript
+const metricsPlugin: LoggerPlugin = {
+  name: "metrics",
+  errorCount: 0,
+
+  onWrite(record: LogRecord, formatted: string) {
+    if (record.level === "error") {
+      this.errorCount++;
+
+      if (this.errorCount % 100 === 0) {
+        console.warn(`Logged ${this.errorCount} errors so far`);
+      }
+    }
+  },
+};
+```
+
+### onFlush()
+
+Called when logs are flushed. Use for batching or cleanup.
+
+```typescript
+const batchPlugin: LoggerPlugin = {
+  name: "batch",
+  buffer: [] as LogRecord[],
+
+  onWrite(record: LogRecord) {
+    this.buffer.push(record);
+
+    if (this.buffer.length >= 100) {
+      this.flush();
+    }
+  },
+
+  async onFlush() {
+    if (this.buffer.length === 0) return;
+
+    console.log(`Flushing ${this.buffer.length} logs`);
+    await sendToExternalService(this.buffer);
+    this.buffer = [];
+  },
+};
+```
+
+### onClose()
+
+Called when logger is closed. Use for cleanup.
+
+```typescript
+const cleanupPlugin: LoggerPlugin = {
+  name: "cleanup",
+  fileHandle: null,
+
+  onInit() {
+    this.fileHandle = fs.openSync("logs.txt", "a");
+  },
+
+  async onClose() {
+    if (this.fileHandle) {
+      fs.closeSync(this.fileHandle);
+      this.fileHandle = null;
+    }
+  },
+};
+```
+
+## Plugin Factory Pattern
+
+Create reusable plugins with configuration:
+
+```typescript
+type MyPluginOptions = {
+  threshold: number;
+  callback?: (count: number) => void;
+};
+
+export function myPlugin(options: MyPluginOptions): LoggerPlugin {
+  const { threshold, callback } = options;
+  let count = 0;
+
+  return {
+    name: "my-plugin",
+
+    onRecord(record: LogRecord): LogRecord | null {
+      count++;
+
+      if (count >= threshold) {
+        callback?.(count);
+        count = 0;
+      }
+
+      return record;
+    },
+  };
+}
+
+// Usage
+const logger = createLogger({
+  plugins: [
+    myPlugin({
+      threshold: 1000,
+      callback: (count) => console.log(`Processed ${count} logs`),
+    }),
+  ],
+});
+```
+
+## Real-World Examples
+
+### Alerting Plugin
+
+Send alerts when errors exceed threshold:
+
+```typescript
+type AlertPluginOptions = {
+  errorThreshold: number;
+  windowMs: number;
+  onAlert: (count: number) => void;
+};
+
+export function alertPlugin(options: AlertPluginOptions): LoggerPlugin {
+  const { errorThreshold, windowMs, onAlert } = options;
+
+  let errorCount = 0;
+  let windowStart = Date.now();
+
+  return {
+    name: "alert",
+    order: 90,
+
+    onRecord(record: LogRecord): LogRecord {
+      if (record.level === "error") {
+        const now = Date.now();
+
+        // Reset window
+        if (now - windowStart >= windowMs) {
+          errorCount = 0;
+          windowStart = now;
+        }
+
+        errorCount++;
+
+        // Trigger alert
+        if (errorCount >= errorThreshold) {
+          onAlert(errorCount);
+          errorCount = 0; // Reset after alert
+        }
+      }
+
+      return record;
+    },
+  };
+}
+
+// Usage
+const logger = createLogger({
+  plugins: [
+    alertPlugin({
+      errorThreshold: 10,
+      windowMs: 60000, // 1 minute
+      onAlert: (count) => {
+        sendPagerDutyAlert(`${count} errors in last minute`);
+      },
+    }),
+  ],
+});
+```
+
+### Deduplication Plugin
+
+Drop duplicate logs within a time window:
+
+```typescript
+type DedupePluginOptions = {
+  windowMs?: number;
+  keyFn?: (record: LogRecord) => string;
+};
+
+export function dedupePlugin(options: DedupePluginOptions = {}): LoggerPlugin {
+  const { windowMs = 60000, keyFn } = options;
+
+  const seen = new Map<string, number>();
+
+  function getKey(record: LogRecord): string {
+    if (keyFn) {
+      return keyFn(record);
+    }
+    return `${record.level}:${record.msg}`;
+  }
+
+  function cleanup() {
+    const now = Date.now();
+    for (const [key, timestamp] of seen.entries()) {
+      if (now - timestamp >= windowMs) {
+        seen.delete(key);
+      }
+    }
+  }
+
+  // Cleanup every minute
+  const interval = setInterval(cleanup, 60000);
+
+  return {
+    name: "dedupe",
+    order: 15,
+
+    onRecord(record: LogRecord): LogRecord | null {
+      const key = getKey(record);
+      const now = Date.now();
+
+      const lastSeen = seen.get(key);
+      if (lastSeen && now - lastSeen < windowMs) {
+        return null; // Drop duplicate
+      }
+
+      seen.set(key, now);
+      return record;
+    },
+
+    onClose() {
+      clearInterval(interval);
+    },
+  };
+}
+```
+
+### Performance Monitoring Plugin
+
+Track performance metrics for logging:
+
+```typescript
+type PerformancePluginOptions = {
+  sampleRate?: number;
+  onReport?: (metrics: PerformanceMetrics) => void;
+};
+
+type PerformanceMetrics = {
+  totalLogs: number;
+  avgDuration: number;
+  p95Duration: number;
+  p99Duration: number;
+};
+
+export function performancePlugin(options: PerformancePluginOptions = {}): LoggerPlugin {
+  const { sampleRate = 1.0, onReport } = options;
+
+  const durations: number[] = [];
+  let totalLogs = 0;
+  let startTime: number | null = null;
+
+  function shouldSample(): boolean {
+    return Math.random() < sampleRate;
+  }
+
+  function calculateMetrics(): PerformanceMetrics {
+    const sorted = [...durations].sort((a, b) => a - b);
+    const sum = sorted.reduce((a, b) => a + b, 0);
+
+    return {
+      totalLogs,
+      avgDuration: sum / sorted.length,
+      p95Duration: sorted[Math.floor(sorted.length * 0.95)] || 0,
+      p99Duration: sorted[Math.floor(sorted.length * 0.99)] || 0,
+    };
+  }
+
+  // Report metrics every minute
+  const interval = setInterval(() => {
+    if (durations.length > 0) {
+      const metrics = calculateMetrics();
+      onReport?.(metrics);
+      console.log("Logging performance:", metrics);
+      durations.length = 0; // Clear
+    }
+  }, 60000);
+
+  return {
+    name: "performance",
+    order: 5,
+
+    onRecord(record: LogRecord): LogRecord {
+      totalLogs++;
+
+      if (shouldSample()) {
+        startTime = performance.now();
+      }
+
+      return record;
+    },
+
+    onWrite(record: LogRecord) {
+      if (startTime !== null) {
+        const duration = performance.now() - startTime;
+        durations.push(duration);
+        startTime = null;
+      }
+    },
+
+    onClose() {
+      clearInterval(interval);
+    },
+  };
+}
+```
+
+### Context Propagation Plugin
+
+Automatically add context from AsyncLocalStorage:
+
+```typescript
+import { AsyncLocalStorage } from "async_hooks";
+
+type ContextStorage = {
+  userId?: string;
+  tenantId?: string;
+  requestId?: string;
+  [key: string]: unknown;
+};
+
+const storage = new AsyncLocalStorage<ContextStorage>();
+
+export function contextPropagationPlugin(): LoggerPlugin {
+  return {
+    name: "context-propagation",
+    order: 20,
+
+    onRecord(record: LogRecord): LogRecord {
+      const context = storage.getStore();
+
+      if (!context) {
+        return record;
+      }
+
+      return {
+        ...record,
+        context: {
+          ...record.context,
+          ...context,
+        },
+      };
+    },
+  };
+}
+
+// Helper to set context
+export function withContext<T>(context: ContextStorage, fn: () => T): T {
+  return storage.run(context, fn);
+}
+
+// Usage
+const logger = createLogger({
+  plugins: [contextPropagationPlugin()],
+});
+
+withContext({ userId: "123", requestId: "abc" }, () => {
+  logger.info("Processing"); // Includes userId and requestId
+});
+```
+
+## Plugin Best Practices
+
+### 1. Keep Plugins Focused
+
+Each plugin should do one thing well:
+
+```typescript
+// Good: Focused plugin
+const errorCountPlugin: LoggerPlugin = {
+  name: "error-count",
+  // ... counts errors only
+};
+
+// Bad: Does too much
+const megaPlugin: LoggerPlugin = {
+  name: "mega",
+  // ... counts errors, filters, enriches, formats, etc.
+};
+```
+
+### 2. Handle Errors Gracefully
+
+Plugin errors are caught and logged, but don't crash the process:
+
+```typescript
+const safePlugin: LoggerPlugin = {
+  name: "safe",
+
+  onRecord(record: LogRecord): LogRecord {
+    try {
+      return transformRecord(record);
+    } catch (error) {
+      // Error is caught and logged by cenglu
+      // Return original record as fallback
+      return record;
+    }
+  },
+};
+```
+
+### 3. Minimize Performance Impact
+
+Use early returns and avoid expensive operations:
+
+```typescript
+const fastPlugin: LoggerPlugin = {
+  name: "fast",
+
+  onRecord(record: LogRecord): LogRecord | null {
+    // Early return for fast path
+    if (record.level === "trace") {
+      return null;
+    }
+
+    // Expensive operation only when needed
+    if (record.context?.needsProcessing) {
+      return expensiveTransform(record);
+    }
+
+    return record;
+  },
+};
+```
+
+### 4. Clean Up Resources
+
+Always clean up in `onClose`:
+
+```typescript
+const resourcePlugin: LoggerPlugin = {
+  name: "resource",
+  connection: null,
+  interval: null,
+
+  onInit() {
+    this.connection = createConnection();
+    this.interval = setInterval(() => this.heartbeat(), 30000);
+  },
+
+  async onClose() {
+    if (this.interval) {
+      clearInterval(this.interval);
+    }
+    if (this.connection) {
+      await this.connection.close();
+    }
+  },
+};
+```
+
+### 5. Use TypeScript
+
+Type your plugins for better developer experience:
+
+```typescript
+type MyPluginOptions = {
+  threshold: number;
+  callback: (value: number) => void;
+};
+
+export function myPlugin(options: MyPluginOptions): LoggerPlugin {
+  // TypeScript ensures type safety
+  const { threshold, callback } = options;
+
+  return {
+    name: "my-plugin",
+    onRecord(record: LogRecord): LogRecord {
+      // ...
+    },
+  };
+}
+```
+
+## Testing Plugins
+
+### Unit Testing
+
+```typescript
+import { describe, expect, it } from "vitest";
+import { myPlugin } from "./my-plugin";
+
+describe("myPlugin", () => {
+  it("should transform records", () => {
+    const plugin = myPlugin({ threshold: 10 });
+
+    const record = {
+      time: Date.now(),
+      level: "info" as const,
+      msg: "test",
+    };
+
+    const result = plugin.onRecord?.(record);
+
+    expect(result).toBeDefined();
+    expect(result?.context?.processed).toBe(true);
+  });
+
+  it("should drop records when threshold exceeded", () => {
+    const plugin = myPlugin({ threshold: 0 });
+
+    const record = {
+      time: Date.now(),
+      level: "info" as const,
+      msg: "test",
+    };
+
+    const result = plugin.onRecord?.(record);
+
+    expect(result).toBeNull();
+  });
+});
+```
+
+### Integration Testing
+
+```typescript
+import { createLogger } from "cenglu";
+import { myPlugin } from "./my-plugin";
+
+it("should work with logger", () => {
+  const logs: any[] = [];
+
+  const logger = createLogger({
+    plugins: [myPlugin({ threshold: 10 })],
+    adapters: [
+      {
+        name: "test",
+        handle: (record) => logs.push(record),
+      },
+    ],
+  });
+
+  logger.info("test message");
+
+  expect(logs).toHaveLength(1);
+  expect(logs[0].context?.processed).toBe(true);
+});
+```
+
+## Plugin Distribution
+
+### Package Structure
+
+```
+my-cenglu-plugin/
+├── src/
+│   ├── index.ts
+│   └── plugin.ts
+├── tests/
+│   └── plugin.test.ts
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+### `package.json`
+
+```json
+{
+  "name": "cenglu-plugin-myplugin",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "keywords": ["cenglu", "logging", "plugin"],
+  "peerDependencies": {
+    "cenglu": "^2.0.0"
+  }
+}
+```

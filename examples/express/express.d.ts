@@ -1,3 +1,4 @@
+// biome-ignore-all lint: it's an example code
 import type Logger from "cenglu";
 
 declare global {
@@ -14,5 +15,3 @@ declare global {
     }
   }
 }
-
-export {};

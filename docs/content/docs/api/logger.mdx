@@ -1,0 +1,572 @@
+---
+title: Logger API
+description: Complete API reference for the Logger class
+---
+
+# Logger API
+
+## createLogger()
+
+Factory function to create a logger instance.
+
+```typescript
+function createLogger(options?: LoggerOptions): Logger
+```
+
+### Parameters
+
+See [Configuration](/docs/getting-started/configuration) for detailed options.
+
+### Returns
+
+Returns a `Logger` instance.
+
+### Example
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({
+  service: "my-app",
+  level: "info",
+});
+```
+
+## Logger Class
+
+### Logging Methods
+
+#### trace()
+
+Log at trace level (most verbose).
+
+```typescript
+logger.trace(message: string, context?: Bindings): void
+```
+
+**Example:**
+```typescript
+logger.trace("Entering function", { functionName: "processData" });
+```
+
+#### debug()
+
+Log at debug level.
+
+```typescript
+logger.debug(message: string, context?: Bindings): void
+```
+
+**Example:**
+```typescript
+logger.debug("Processing batch", { batchSize: 100, batchId: 42 });
+```
+
+#### info()
+
+Log at info level.
+
+```typescript
+logger.info(message: string, context?: Bindings): void
+```
+
+**Example:**
+```typescript
+logger.info("User logged in", { userId: 123, ip: "192.168.1.1" });
+```
+
+#### warn()
+
+Log at warn level.
+
+```typescript
+logger.warn(message: string, context?: Bindings): void
+```
+
+**Example:**
+```typescript
+logger.warn("Rate limit approaching", {
+  current: 950,
+  limit: 1000,
+  userId: 123,
+});
+```
+
+#### error()
+
+Log at error level with optional error object.
+
+```typescript
+logger.error(message: string, error?: Error, context?: Bindings): void
+logger.error(message: string, context?: Bindings): void
+```
+
+**Examples:**
+```typescript
+// With error object
+try {
+  await riskyOperation();
+} catch (err) {
+  logger.error("Operation failed", err, { attemptCount: 3 });
+}
+
+// Without error object
+logger.error("Invalid configuration", { configFile: "app.json" });
+```
+
+#### fatal()
+
+Log at fatal level (most severe).
+
+```typescript
+logger.fatal(message: string, error?: Error, context?: Bindings): void
+logger.fatal(message: string, context?: Bindings): void
+```
+
+**Example:**
+```typescript
+logger.fatal("Database connection lost", error, {
+  host: "db.example.com",
+  attempts: 5,
+});
+process.exit(1);
+```
+
+### Level Management
+
+#### setLevel()
+
+Change the minimum log level.
+
+```typescript
+logger.setLevel(level: LogLevel): void
+```
+
+**Example:**
+```typescript
+logger.setLevel("debug");
+logger.debug("This will now be logged");
+```
+
+#### getLevel()
+
+Get the current log level.
+
+```typescript
+logger.getLevel(): LogLevel
+```
+
+**Example:**
+```typescript
+const currentLevel = logger.getLevel();
+console.log(`Current level: ${currentLevel}`); // "info"
+```
+
+#### isLevelEnabled()
+
+Check if a log level is enabled.
+
+```typescript
+logger.isLevelEnabled(level: LogLevel): boolean
+```
+
+**Example:**
+```typescript
+if (logger.isLevelEnabled("debug")) {
+  const expensiveData = computeExpensiveDebugData();
+  logger.debug("Debug data", expensiveData);
+}
+```
+
+### Context Binding
+
+#### with()
+
+Create a lightweight bound logger with temporary context.
+
+```typescript
+logger.with(context: Bindings): BoundLogger
+```
+
+**Example:**
+```typescript
+const boundLogger = logger.with({ requestId: "abc-123" });
+boundLogger.info("Processing request");
+
+// Chain multiple with() calls
+logger
+  .with({ userId: 123 })
+  .with({ action: "login" })
+  .info("User action");
+```
+
+**Returns:** `BoundLogger` instance
+
+#### child()
+
+Create a child logger with permanent bindings.
+
+```typescript
+logger.child(bindings: Bindings): Logger
+```
+
+**Example:**
+```typescript
+const userLogger = logger.child({ module: "users" });
+userLogger.info("User created", { userId: 123 });
+
+// Nested child loggers
+const requestLogger = userLogger.child({ requestId: "abc-123" });
+requestLogger.info("Processing request");
+```
+
+**Returns:** New `Logger` instance that shares transports and configuration
+
+**Differences from `with()`:**
+
+| Feature | `with()` | `child()` |
+|---------|----------|-----------|
+| Returns | `BoundLogger` | `Logger` |
+| Bindings | Temporary | Permanent |
+| Performance | Lighter | Heavier |
+| Use case | Single-use context | Long-lived logger |
+
+### Dynamic Logging
+
+#### logAt()
+
+Log at a dynamic level.
+
+```typescript
+logger.logAt(level: LogLevel, message: string, context?: Bindings): void
+```
+
+**Example:**
+```typescript
+function log(level: LogLevel, message: string) {
+  logger.logAt(level, message, { timestamp: Date.now() });
+}
+
+log("info", "Application started");
+log("error", "Application crashed");
+```
+
+### Conditional Logging
+
+Guard expensive operations with level checks.
+
+#### ifTrace()
+
+Execute function only if trace level is enabled.
+
+```typescript
+logger.ifTrace(fn: () => [string, Bindings?]): void
+```
+
+#### ifDebug()
+
+Execute function only if debug level is enabled.
+
+```typescript
+logger.ifDebug(fn: () => [string, Bindings?]): void
+```
+
+#### ifInfo()
+
+Execute function only if info level is enabled.
+
+```typescript
+logger.ifInfo(fn: () => [string, Bindings?]): void
+```
+
+**Example:**
+```typescript
+// Bad: Always computes expensive data
+logger.debug("Debug data", computeExpensiveData());
+
+// Good: Only computes if debug is enabled
+logger.ifDebug(() => {
+  const data = computeExpensiveData();
+  return ["Debug data", data];
+});
+
+// With just message
+logger.ifTrace(() => ["Trace message"]);
+
+// With context
+logger.ifInfo(() => ["Info message", { data: 123 }]);
+```
+
+### Performance Timing
+
+#### time()
+
+Create a timer to measure operation duration.
+
+```typescript
+logger.time(label: string, context?: Bindings): TimerResult
+```
+
+**Returns:** `TimerResult` object with methods:
+
+- `()` - End timer and log (same as `.end()`)
+- `.end()` - End timer and log
+- `.elapsed()` - Get elapsed time without logging
+- `.endWithContext(context)` - End timer and log with additional context
+
+**Examples:**
+
+```typescript
+// Basic usage
+const done = logger.time("database-query");
+await db.query("SELECT * FROM users");
+done(); // Logs: "database-query completed" { durationMs: 42 }
+
+// End explicitly
+const timer = logger.time("process-data");
+await processData();
+timer.end();
+
+// Get elapsed without logging
+const timer = logger.time("operation");
+await operation();
+const ms = timer.elapsed();
+console.log(`Took ${ms}ms`);
+
+// End with additional context
+const timer = logger.time("api-request", {
+  endpoint: "/users",
+  method: "GET",
+});
+const response = await fetch("/users");
+timer.endWithContext({
+  statusCode: response.status,
+  recordCount: response.data.length,
+});
+```
+
+**Timer Output:**
+```json
+{
+  "level": "info",
+  "msg": "database-query completed",
+  "context": {
+    "durationMs": 42
+  }
+}
+```
+
+### Lifecycle Management
+
+#### flush()
+
+Flush all pending logs to transports.
+
+```typescript
+logger.flush(): Promise<void>
+```
+
+**Example:**
+```typescript
+// Before process exit
+process.on("SIGTERM", async () => {
+  await logger.flush();
+  process.exit(0);
+});
+```
+
+#### close()
+
+Flush and close all transports and plugins.
+
+```typescript
+logger.close(): Promise<void>
+```
+
+**Example:**
+```typescript
+// Graceful shutdown
+async function shutdown() {
+  console.log("Shutting down...");
+
+  // Flush pending logs
+  await logger.flush();
+
+  // Close transports and plugins
+  await logger.close();
+
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+```
+
+**Important:** Only call `close()` on parent loggers, not child loggers.
+
+```typescript
+const parent = createLogger({ service: "app" });
+const child = parent.child({ module: "users" });
+
+// On shutdown
+await parent.close(); // ✅ Close parent
+// await child.close(); // ❌ Never close child
+```
+
+## BoundLogger Class
+
+Created via `logger.with()` for temporary context bindings.
+
+### Methods
+
+All logging methods are available with the same signature:
+
+- `trace(message, context?)`
+- `debug(message, context?)`
+- `info(message, context?)`
+- `warn(message, context?)`
+- `error(message, error?, context?)`
+- `fatal(message, error?, context?)`
+
+### Additional Methods
+
+#### with()
+
+Chain additional context.
+
+```typescript
+boundLogger.with(context: Bindings): BoundLogger
+```
+
+**Example:**
+```typescript
+const bound = logger
+  .with({ userId: 123 })
+  .with({ sessionId: "sess-abc" })
+  .with({ action: "login" });
+
+bound.info("User action");
+// Includes all three contexts
+```
+
+#### child()
+
+Create a child logger with merged context.
+
+```typescript
+boundLogger.child(bindings: Bindings): Logger
+```
+
+**Example:**
+```typescript
+const bound = logger.with({ requestId: "abc-123" });
+const child = bound.child({ module: "users" });
+
+child.info("User created");
+// Includes both requestId and module
+```
+
+## Type Definitions
+
+### LogLevel
+
+```typescript
+type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+```
+
+### Bindings
+
+```typescript
+type Bindings = {
+  [key: string]: unknown;
+};
+```
+
+### LogRecord
+
+```typescript
+type LogRecord = {
+  time: number;           // Unix timestamp (ms)
+  level: LogLevel;        // Log severity
+  msg: string;            // Log message
+  context?: Bindings;     // Structured context
+  err?: ErrorInfo | null; // Error details
+  service?: string;       // Service name
+  env?: string;           // Environment
+  version?: string;       // Version
+  traceId?: string;       // Distributed trace ID
+  spanId?: string;        // Span ID
+};
+```
+
+### ErrorInfo
+
+```typescript
+type ErrorInfo = {
+  name?: string;
+  message?: string;
+  stack?: string;
+  code?: string | number;
+  cause?: ErrorInfo;
+  [key: string]: unknown;
+};
+```
+
+### TimerResult
+
+```typescript
+type TimerResult = {
+  (): void;                               // End timer and log
+  end(): void;                            // End timer and log
+  elapsed(): number;                      // Get elapsed ms
+  endWithContext(context: Bindings): void; // End with context
+};
+```
+
+## Constants
+
+### Log Levels
+
+```typescript
+import { LEVELS, LEVEL_VALUES } from "cenglu";
+
+console.log(LEVELS);
+// ["trace", "debug", "info", "warn", "error", "fatal"]
+
+console.log(LEVEL_VALUES);
+// { trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60 }
+```
+
+### Default Theme
+
+```typescript
+import { DEFAULT_THEME, NO_COLOR_THEME } from "cenglu";
+
+const logger = createLogger({
+  pretty: {
+    enabled: true,
+    theme: DEFAULT_THEME, // Colored theme
+  },
+});
+
+const noColorLogger = createLogger({
+  pretty: {
+    enabled: true,
+    theme: NO_COLOR_THEME, // No colors
+  },
+});
+```
+
+## Utility Functions
+
+### isValidLevel()
+
+Check if a string is a valid log level.
+
+```typescript
+import { isValidLevel } from "cenglu";
+
+console.log(isValidLevel("info"));  // true
+console.log(isValidLevel("debug")); // true
+console.log(isValidLevel("invalid")); // false
+```

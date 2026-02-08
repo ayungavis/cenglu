@@ -1,0 +1,1006 @@
+---
+title: Testing
+description: Testing utilities and patterns for code that uses Cenglu logger
+---
+
+Cenglu provides comprehensive testing utilities that make it easy to test code that uses the logger without actually writing to console or files. These utilities allow you to capture logs, control time, mock random values, and make assertions about logging behavior.
+
+## Quick Start
+
+```typescript
+import { describe, it, expect, beforeEach } from "vitest";
+import { createTestLogger } from "cenglu/testing";
+import { UserService } from "./user-service";
+
+describe("UserService", () => {
+  let logger, transport;
+
+  beforeEach(() => {
+    ({ logger, transport } = createTestLogger());
+  });
+
+  it("logs user creation", async () => {
+    const service = new UserService(logger);
+    await service.createUser({ email: "test@example.com" });
+
+    expect(transport.hasLog("info", "User created")).toBe(true);
+    expect(transport.last()?.context?.email).toBe("test@example.com");
+  });
+});
+```
+
+## Core Testing Utilities
+
+### createTestLogger()
+
+The main entry point for testing. Creates a logger configured for testing with:
+- **TestTransport** for capturing logs
+- **MockTime** for controlling timestamps
+- **MockRandom** for controlling sampling
+- Console and file transports disabled
+- Trace level enabled (captures all logs by default)
+
+```typescript
+import { createTestLogger } from "cenglu/testing";
+
+const { logger, transport, time, random, reset } = createTestLogger({
+  startTime: 1700000000000,       // Initial timestamp
+  randomValues: [0.1, 0.5, 0.9],  // Sequence of random values
+  debug: false,                    // Set to true to see logs in console
+  // Any other LoggerOptions...
+  level: "info",
+  plugins: [samplingPlugin({ defaultRate: 0.5 })],
+});
+
+// Use logger in your tests
+logger.info("Test message", { userId: 123 });
+
+// Make assertions
+expect(transport.logs).toHaveLength(1);
+expect(transport.last()?.msg).toBe("Test message");
+
+// Clean up after test
+reset();
+```
+
+### TestTransport
+
+Captures logs in memory for inspection and assertions.
+
+#### Accessing Logs
+
+```typescript
+// Get all captured logs
+transport.logs; // CapturedLog[]
+
+// Get first, last, or specific log
+const first = transport.first();
+const last = transport.last();
+const third = transport.at(2);
+
+// Each captured log contains:
+{
+  level: "info",
+  msg: "User created",
+  context: { userId: 123 },
+  err: undefined,
+  timestamp: 1700000000000,
+  raw: { /* full LogRecord */ },
+  formatted: "...", // Formatted log string
+  isError: false,
+}
+```
+
+#### Filtering Logs
+
+```typescript
+// By level
+const errors = transport.getByLevel("error");
+const warnings = transport.getByLevel("warn");
+
+// By message pattern
+const found = transport.findByMessage("User");
+const withRegex = transport.findByMessage(/user created/i);
+
+// By context
+const withUserId = transport.findByContext("userId");
+const specificUser = transport.findByContext("userId", 123);
+
+// Errors only
+const withErrors = transport.findWithErrors();
+const validationErrors = transport.findByErrorName("ValidationError");
+```
+
+#### Checking Logs
+
+```typescript
+// Check if specific log exists
+transport.hasLog("info", "User created");              // Exact match
+transport.hasLog("error", /validation failed/i);        // Regex match
+transport.hasMessage("created");                        // Any level
+
+// Check for errors
+transport.hasError();                      // Any error
+transport.hasError("ValidationError");     // Specific error name
+
+// Check for context
+transport.hasContext("userId");            // Key exists
+transport.hasContext("userId", 123);       // Key with value
+
+// Count logs
+transport.countByLevel("error");          // Number of errors
+transport.logs.length;                    // Total logs
+```
+
+#### Assertions
+
+```typescript
+// Built-in assertion methods
+transport.assertLogged("info", "User created");
+transport.assertNotLogged("error", "Critical failure");
+transport.assertLogCount("warn", 2);
+transport.assertTotalCount(5);
+transport.assertError("ValidationError");
+transport.assertNoErrors();
+transport.assertContext("userId", 123);
+
+// Each throws descriptive error on failure
+try {
+  transport.assertLogged("error", "Missing");
+} catch (err) {
+  // Error: Expected log not found: error "Missing"
+  // Actual logs:
+  //   info: User created
+  //   warn: Slow operation
+}
+```
+
+#### Snapshots
+
+```typescript
+// Convert to snapshot format (omits timestamps, simplified)
+const snapshot = transport.toSnapshot();
+expect(snapshot).toMatchSnapshot();
+
+// Or as JSON string
+const json = transport.toJSON();
+
+// Get formatted strings
+const formatted = transport.toFormattedStrings();
+```
+
+#### Cleanup
+
+```typescript
+// Clear logs but keep write count
+transport.clear();
+
+// Reset everything
+transport.reset();
+```
+
+### MockTime
+
+Control timestamps for deterministic testing.
+
+```typescript
+const { logger, transport, time } = createTestLogger({
+  startTime: 1700000000000,
+});
+
+logger.info("First log");
+expect(transport.last()?.timestamp).toBe(1700000000000);
+
+// Advance time
+time.advance(1000); // +1 second
+logger.info("Second log");
+expect(transport.last()?.timestamp).toBe(1700000001000);
+
+// Set absolute time
+time.set(1700000005000);
+time.setDate(new Date("2024-01-01T00:00:00Z"));
+
+// Get current time
+const now = time.now();
+const date = time.toDate();
+
+// Reset
+time.reset(); // Back to 1700000000000
+time.reset(1600000000000); // Reset to specific time
+```
+
+### MockRandom
+
+Control random values for deterministic sampling tests.
+
+```typescript
+const { logger, transport, random } = createTestLogger({
+  randomValues: [0.1, 0.5, 0.9], // Sequence repeats
+  plugins: [samplingPlugin({ defaultRate: 0.5 })],
+});
+
+// First log: 0.1 < 0.5 → logged
+// Second log: 0.5 >= 0.5 → dropped
+// Third log: 0.9 >= 0.5 → dropped
+// Fourth log: 0.1 < 0.5 → logged (repeats)
+
+logger.info("Log 1");
+logger.info("Log 2");
+logger.info("Log 3");
+logger.info("Log 4");
+
+expect(transport.logs).toHaveLength(2);
+
+// Change values mid-test
+random.setValues([0.0, 0.0]); // All logs will pass sampling
+random.always(0.0);            // Always return 0.0
+random.queue(0.1, 0.9, 0.5);  // One-time sequence
+
+// Check call count
+expect(random.getCallCount()).toBe(4);
+
+// Reset
+random.reset(); // Reset index to 0
+```
+
+## Testing Patterns
+
+### Unit Testing Services
+
+```typescript
+import { describe, it, expect, beforeEach } from "vitest";
+import { createTestLogger } from "cenglu/testing";
+
+class UserService {
+  constructor(private logger: Logger) {}
+
+  async createUser(data: { email: string }) {
+    this.logger.info("Creating user", { email: data.email });
+
+    try {
+      const user = await db.users.create(data);
+      this.logger.info("User created", { userId: user.id });
+      return user;
+    } catch (error) {
+      this.logger.error("Failed to create user", error, { email: data.email });
+      throw error;
+    }
+  }
+}
+
+describe("UserService", () => {
+  let logger, transport, service;
+
+  beforeEach(() => {
+    ({ logger, transport } = createTestLogger());
+    service = new UserService(logger);
+  });
+
+  it("logs user creation", async () => {
+    await service.createUser({ email: "test@example.com" });
+
+    transport.assertLogged("info", "Creating user");
+    transport.assertLogged("info", "User created");
+    transport.assertContext("email", "test@example.com");
+  });
+
+  it("logs errors on failure", async () => {
+    // Mock db to throw
+    db.users.create.mockRejectedValue(new Error("DB error"));
+
+    await expect(service.createUser({ email: "test@example.com" }))
+      .rejects.toThrow("DB error");
+
+    transport.assertLogged("error", "Failed to create user");
+    transport.assertError();
+  });
+});
+```
+
+### Testing with Plugins
+
+```typescript
+import { createTestLogger } from "cenglu/testing";
+import { samplingPlugin, enrichPlugin } from "cenglu/plugins";
+
+describe("Sampling", () => {
+  it("drops logs based on rate", () => {
+    const { logger, transport, random } = createTestLogger({
+      randomValues: [0.1, 0.9], // First passes, second drops
+      plugins: [samplingPlugin({ defaultRate: 0.5 })],
+    });
+
+    logger.info("Log 1"); // 0.1 < 0.5 → logged
+    logger.info("Log 2"); // 0.9 >= 0.5 → dropped
+
+    expect(transport.logs).toHaveLength(1);
+    expect(transport.first()?.msg).toBe("Log 1");
+  });
+
+  it("enriches logs with metadata", () => {
+    const { logger, transport } = createTestLogger({
+      plugins: [
+        enrichPlugin({
+          fields: { app: "test-app", version: "1.0.0" },
+        }),
+      ],
+    });
+
+    logger.info("Test");
+
+    const log = transport.last();
+    expect(log?.context?.app).toBe("test-app");
+    expect(log?.context?.version).toBe("1.0.0");
+  });
+});
+```
+
+### Testing Async Context
+
+```typescript
+import { createTestLogger, flushPromises } from "cenglu/testing";
+import { LoggerContext } from "cenglu";
+
+describe("Async Context", () => {
+  it("propagates context through async operations", async () => {
+    const { logger, transport } = createTestLogger({
+      useAsyncContext: true,
+    });
+
+    await LoggerContext.runAsync(
+      { correlationId: "test-123", bindings: { userId: 456 } },
+      async () => {
+        logger.info("inside context");
+
+        await flushPromises();
+
+        const log = transport.last();
+        expect(log?.context?.correlationId).toBe("test-123");
+        expect(log?.context?.userId).toBe(456);
+      }
+    );
+  });
+
+  it("nested contexts work correctly", async () => {
+    const { logger, transport } = createTestLogger({
+      useAsyncContext: true,
+    });
+
+    await LoggerContext.runAsync({ bindings: { level: "outer" } }, async () => {
+      logger.info("outer");
+
+      await LoggerContext.runAsync({ bindings: { level: "inner" } }, async () => {
+        logger.info("inner");
+      });
+    });
+
+    expect(transport.at(0)?.context?.level).toBe("outer");
+    expect(transport.at(1)?.context?.level).toBe("inner");
+  });
+});
+```
+
+### Testing Error Handling
+
+```typescript
+import { createTestLogger, createMockError } from "cenglu/testing";
+
+describe("Error Logging", () => {
+  it("captures error details", () => {
+    const { logger, transport } = createTestLogger();
+
+    const error = createMockError("ValidationError", "Email is required", {
+      code: "E001",
+      field: "email",
+    });
+
+    logger.error("Validation failed", error);
+
+    const log = transport.last();
+    expect(log?.err?.name).toBe("ValidationError");
+    expect(log?.err?.message).toBe("Email is required");
+    expect(log?.err?.code).toBe("E001");
+  });
+
+  it("handles error cause chain", () => {
+    const { logger, transport } = createTestLogger();
+
+    const rootCause = new Error("Root cause");
+    const middleError = new Error("Middle error");
+    middleError.cause = rootCause;
+    const topError = new Error("Top error");
+    topError.cause = middleError;
+
+    logger.error("Error occurred", topError);
+
+    const log = transport.last();
+    expect(log?.err?.cause?.name).toBe("Error");
+    expect(log?.err?.cause?.message).toBe("Middle error");
+  });
+
+  it("handles non-Error objects", () => {
+    const { logger, transport } = createTestLogger();
+
+    logger.error("failed", { code: "E001", message: "Custom error" });
+
+    const log = transport.last();
+    expect(log?.err?.code).toBe("E001");
+    expect(log?.err?.message).toBe("Custom error");
+  });
+});
+```
+
+### Testing Timers
+
+```typescript
+import { createTestLogger } from "cenglu/testing";
+
+describe("Timers", () => {
+  it("logs duration with mock time", () => {
+    const { logger, transport, time } = createTestLogger();
+
+    const done = logger.time("database query", { table: "users" });
+
+    time.advance(150); // Simulate 150ms
+
+    done();
+
+    const log = transport.last();
+    expect(log?.msg).toBe("database query completed");
+    expect(log?.context?.durationMs).toBe(150);
+    expect(log?.context?.table).toBe("users");
+  });
+});
+```
+
+## Custom Matchers (Vitest/Jest)
+
+Cenglu provides custom matchers for more readable assertions.
+
+### Setup
+
+```typescript
+// In your test setup file (e.g., vitest.setup.ts)
+import { expect } from "vitest";
+import { setupLoggerMatchers } from "cenglu/testing";
+
+setupLoggerMatchers(expect);
+
+// Or in individual test files
+beforeAll(() => {
+  setupLoggerMatchers(expect);
+});
+```
+
+### Usage
+
+```typescript
+import { expect } from "vitest";
+import { createTestLogger } from "cenglu/testing";
+
+const { logger, transport } = createTestLogger();
+
+logger.info("User created", { userId: 123 });
+logger.warn("Slow query", { duration: 1500 });
+logger.error("Database error", new Error("Connection failed"));
+
+// Custom matchers
+expect(transport).toHaveLogged("info", "User created");
+expect(transport).toHaveLogged("warn", /slow query/i);
+expect(transport).toHaveLogCount("error", 1);
+expect(transport).toHaveLoggedError("Error");
+expect(transport).toHaveLoggedWithContext("userId", 123);
+expect(transport).toHaveLoggedWithContext("duration");
+expect(transport).toHaveNoLogs("fatal");
+expect(transport).toHaveLastLog("error", "Database error");
+```
+
+### Available Matchers
+
+<div className="not-prose">
+
+| Matcher | Description |
+|---------|-------------|
+| `toHaveLogged(level, message)` | Assert log with level and message exists |
+| `toHaveLogCount(level, count)` | Assert exact count of logs at level |
+| `toHaveLoggedError(errorName?)` | Assert error was logged (optionally with name) |
+| `toHaveLoggedWithContext(key, value?)` | Assert context key exists (optionally with value) |
+| `toHaveNoLogs(level?)` | Assert no logs (optionally at specific level) |
+| `toHaveLastLog(level, message)` | Assert last log matches level and message |
+
+</div>
+
+## Alternative Testing Approaches
+
+### Spy Transport
+
+For testing with mocking frameworks:
+
+```typescript
+import { vi } from "vitest";
+import { createLogger } from "cenglu";
+import { createSpyTransport } from "cenglu/testing";
+
+describe("with spy", () => {
+  it("calls spy for each log", () => {
+    const spy = vi.fn();
+    const logger = createLogger({
+      transports: [createSpyTransport(spy)],
+      console: { enabled: false },
+    });
+
+    logger.info("Hello", { userId: 123 });
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "info",
+        msg: "Hello",
+        context: { userId: 123 },
+      }),
+      expect.any(String), // formatted
+      false // isError
+    );
+  });
+});
+```
+
+### Null Transport
+
+For performance tests where logs should be discarded:
+
+```typescript
+import { createNullLogger } from "cenglu/testing";
+
+describe("performance", () => {
+  it("benchmarks without I/O", () => {
+    const logger = createNullLogger();
+
+    const start = Date.now();
+
+    for (let i = 0; i < 100000; i++) {
+      logger.info("Benchmark log", { iteration: i });
+    }
+
+    const duration = Date.now() - start;
+    expect(duration).toBeLessThan(1000);
+  });
+});
+```
+
+### Manual Transport Testing
+
+Create custom test transport for specific needs:
+
+```typescript
+import type { Transport, LogRecord } from "cenglu";
+
+class CustomTestTransport implements Transport {
+  readonly logs: LogRecord[] = [];
+
+  write(record: LogRecord): void {
+    // Custom capture logic
+    this.logs.push(record);
+  }
+}
+```
+
+## Testing Middleware
+
+### Express
+
+```typescript
+import express from "express";
+import request from "supertest";
+import { createTestLogger } from "cenglu/testing";
+import { createExpressMiddleware } from "cenglu/middleware";
+
+describe("Express middleware", () => {
+  it("logs requests", async () => {
+    const { logger, transport } = createTestLogger();
+
+    const app = express();
+    app.use(createExpressMiddleware({ logger }));
+    app.get("/test", (req, res) => res.json({ ok: true }));
+
+    await request(app).get("/test");
+
+    transport.assertLogged("info", /GET \/test/);
+    transport.assertContext("method", "GET");
+    transport.assertContext("statusCode", 200);
+  });
+
+  it("logs errors", async () => {
+    const { logger, transport } = createTestLogger();
+
+    const app = express();
+    app.use(createExpressMiddleware({ logger }));
+    app.get("/error", () => {
+      throw new Error("Test error");
+    });
+
+    await request(app).get("/error");
+
+    transport.assertLogged("error", "Test error");
+    transport.assertError("Error");
+  });
+});
+```
+
+### Fastify
+
+```typescript
+import Fastify from "fastify";
+import { createTestLogger } from "cenglu/testing";
+import { createFastifyPlugin } from "cenglu/middleware";
+
+describe("Fastify plugin", () => {
+  it("logs requests", async () => {
+    const { logger, transport } = createTestLogger();
+
+    const fastify = Fastify();
+    await fastify.register(createFastifyPlugin({ logger }));
+    fastify.get("/test", () => ({ ok: true }));
+
+    const response = await fastify.inject({
+      method: "GET",
+      url: "/test",
+    });
+
+    expect(response.statusCode).toBe(200);
+    transport.assertLogged("info", /GET \/test/);
+  });
+});
+```
+
+## Helper Utilities
+
+### createMockError()
+
+Create errors with controlled properties for testing:
+
+```typescript
+import { createMockError } from "cenglu/testing";
+
+const error = createMockError("ValidationError", "Email is required", {
+  code: "E001",
+  field: "email",
+  details: { value: "" },
+});
+
+expect(error.name).toBe("ValidationError");
+expect(error.message).toBe("Email is required");
+expect(error.code).toBe("E001");
+```
+
+### createMockContext()
+
+Create mock context bindings:
+
+```typescript
+import { createMockContext } from "cenglu/testing";
+
+const context = createMockContext({
+  userId: "test-user-123",
+  tenantId: "test-tenant-456",
+});
+
+logger.info("With context", context);
+```
+
+### assertLogs() and assertNoLogs()
+
+Assert logging behavior of functions:
+
+```typescript
+import { assertLogs, assertNoLogs } from "cenglu/testing";
+
+await assertLogs(
+  () => service.doSomething(),
+  "info",
+  "Operation completed",
+  logger,
+  transport
+);
+
+await assertNoLogs(
+  () => service.silentOperation(),
+  "error",
+  /error/i,
+  logger,
+  transport
+);
+```
+
+### flushPromises() and delay()
+
+Timing utilities for async tests:
+
+```typescript
+import { flushPromises, delay } from "cenglu/testing";
+
+// Wait for all pending promises
+await flushPromises();
+
+// Wait specific duration
+await delay(100);
+```
+
+## Best Practices
+
+### Clean Up Between Tests
+
+Always clean up state to avoid test contamination:
+
+```typescript
+describe("MyService", () => {
+  let logger, transport, reset;
+
+  beforeEach(() => {
+    ({ logger, transport, reset } = createTestLogger());
+  });
+
+  afterEach(() => {
+    reset(); // Clean up
+  });
+
+  // Tests...
+});
+```
+
+### Use Descriptive Assertions
+
+Prefer specific assertions over generic ones:
+
+```typescript
+// ❌ Generic
+expect(transport.logs.length).toBeGreaterThan(0);
+
+// ✅ Specific
+transport.assertLogged("info", "User created");
+expect(transport.last()?.context?.userId).toBe(123);
+```
+
+### Test Error Scenarios
+
+Don't forget to test error logging:
+
+```typescript
+it("logs validation errors", async () => {
+  const { logger, transport } = createTestLogger();
+
+  try {
+    await service.createUser({ email: "" });
+  } catch (error) {
+    // Expected
+  }
+
+  transport.assertError("ValidationError");
+  transport.assertContext("field", "email");
+});
+```
+
+### Mock External Dependencies
+
+Use null logger for dependencies you're not testing:
+
+```typescript
+import { createNullLogger } from "cenglu/testing";
+
+const externalService = new ExternalService({
+  logger: createNullLogger(), // Don't capture these logs
+});
+```
+
+### Test Plugin Interactions
+
+When using plugins, test they work correctly:
+
+```typescript
+it("sampling and enrichment work together", () => {
+  const { logger, transport, random } = createTestLogger({
+    randomValues: [0.1], // Always pass sampling
+    plugins: [
+      samplingPlugin({ defaultRate: 0.5 }),
+      enrichPlugin({ fields: { app: "test" } }),
+    ],
+  });
+
+  logger.info("Test");
+
+  expect(transport.logs).toHaveLength(1);
+  expect(transport.last()?.context?.app).toBe("test");
+});
+```
+
+### Use Snapshots for Regression Testing
+
+Snapshot tests catch unexpected changes:
+
+```typescript
+it("log format remains stable", () => {
+  const { logger, transport } = createTestLogger();
+
+  logger.info("User action", { userId: 123, action: "login" });
+
+  expect(transport.toSnapshot()).toMatchSnapshot();
+});
+```
+
+## Common Testing Scenarios
+
+### Testing Rate Limiting
+
+```typescript
+import { rateLimitPlugin } from "cenglu/plugins";
+
+it("rate limits logs", () => {
+  const { logger, transport, time } = createTestLogger({
+    plugins: [
+      rateLimitPlugin({
+        maxPerInterval: 2,
+        intervalMs: 1000,
+      }),
+    ],
+  });
+
+  logger.info("Log 1"); // Allowed
+  logger.info("Log 2"); // Allowed
+  logger.info("Log 3"); // Dropped (rate limited)
+
+  expect(transport.logs).toHaveLength(2);
+
+  time.advance(1000); // New interval
+  logger.info("Log 4"); // Allowed again
+
+  expect(transport.logs).toHaveLength(3);
+});
+```
+
+### Testing Batching
+
+```typescript
+import { batchingPlugin } from "cenglu/plugins";
+
+it("batches logs", async () => {
+  const { logger, transport } = createTestLogger({
+    plugins: [
+      batchingPlugin({
+        maxSize: 3,
+        flushIntervalMs: 100,
+      }),
+    ],
+  });
+
+  logger.info("Log 1");
+  logger.info("Log 2");
+
+  expect(transport.logs).toHaveLength(0); // Not flushed yet
+
+  logger.info("Log 3"); // Triggers flush at maxSize
+
+  expect(transport.logs).toHaveLength(3);
+});
+```
+
+### Testing Child Loggers
+
+```typescript
+it("child logger inherits config", () => {
+  const { logger, transport } = createTestLogger();
+
+  const child = logger.child({ service: "auth" });
+  child.info("Authentication successful", { userId: 123 });
+
+  const log = transport.last();
+  expect(log?.context?.service).toBe("auth");
+  expect(log?.context?.userId).toBe(123);
+});
+```
+
+## Integration with Test Frameworks
+
+### Vitest
+
+```typescript
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    globals: true,
+    setupFiles: ["./vitest.setup.ts"],
+  },
+});
+
+// vitest.setup.ts
+import { expect } from "vitest";
+import { setupLoggerMatchers } from "cenglu/testing";
+
+setupLoggerMatchers(expect);
+```
+
+### Jest
+
+```typescript
+// jest.config.js
+module.exports = {
+  setupFilesAfterEnv: ["./jest.setup.ts"],
+};
+
+// jest.setup.ts
+import { setupLoggerMatchers } from "cenglu/testing";
+
+setupLoggerMatchers(expect);
+```
+
+### Playwright (E2E)
+
+For end-to-end tests, use a real logger but with file transport for inspection:
+
+```typescript
+import { createLogger } from "cenglu";
+import { test, expect } from "@playwright/test";
+
+test.beforeEach(async ({ page }) => {
+  const logger = createLogger({
+    file: {
+      enabled: true,
+      path: "./test-logs/e2e.log",
+    },
+  });
+
+  // Inject logger into page context if needed
+});
+```
+
+## Troubleshooting
+
+### Tests Interfering with Each Other
+
+**Problem:** Tests fail when run in parallel or logs from one test appear in another.
+
+**Solution:** Always clean up between tests:
+
+```typescript
+afterEach(() => {
+  reset(); // or transport.clear()
+});
+```
+
+### Async Context Not Working
+
+**Problem:** Context not propagating in tests.
+
+**Solution:** Enable async context explicitly:
+
+```typescript
+const { logger } = createTestLogger({
+  useAsyncContext: true,
+});
+```
+
+### Random Sampling Behavior
+
+**Problem:** Can't reproduce sampling behavior.
+
+**Solution:** Use MockRandom with fixed values:
+
+```typescript
+const { random } = createTestLogger({
+  randomValues: [0.1, 0.5, 0.9],
+});
+```
+
+### Time-Based Tests Are Flaky
+
+**Problem:** Tests that depend on timestamps fail intermittently.
+
+**Solution:** Use MockTime:
+
+```typescript
+const { time } = createTestLogger({
+  startTime: 1700000000000,
+});
+
+time.advance(1000); // Deterministic time progression
+```

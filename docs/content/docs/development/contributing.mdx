@@ -1,0 +1,418 @@
+---
+title: Contributing
+description: Guide for contributing to cenglu
+---
+
+# Contributing to Cenglu
+
+Thank you for your interest in contributing to cenglu! This guide will help you get started.
+
+## Code of Conduct
+
+We expect all contributors to be respectful and constructive. Please:
+
+- Be welcoming and inclusive
+- Respect differing viewpoints
+- Accept constructive criticism
+- Focus on what's best for the project
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+ or Bun
+- Git
+- TypeScript knowledge
+
+### Setup
+
+1. **Fork the repository**
+
+   Visit [github.com/ayungavis/cenglu](https://github.com/ayungavis/cenglu) and click "Fork"
+
+2. **Clone your fork**
+
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/cenglu.git
+   cd cenglu
+   ```
+
+3. **Install dependencies**
+
+   ```bash
+   bun install
+   # or
+   npm install
+   ```
+
+4. **Create a branch**
+
+   ```bash
+   git checkout -b feature/my-new-feature
+   # or
+   git checkout -b fix/issue-123
+   ```
+
+## Development Workflow
+
+### Project Structure
+
+```
+cenglu/
+├── src/
+│   ├── logger.ts           # Core Logger class
+│   ├── types.ts            # Type definitions
+│   ├── context.ts          # AsyncLocalStorage context
+│   ├── redaction.ts        # Redaction logic
+│   ├── format/             # Output formatters
+│   │   ├── json.ts
+│   │   ├── pretty.ts
+│   │   ├── ecs.ts
+│   │   └── ...
+│   ├── middleware/         # Framework middleware
+│   │   ├── express.ts
+│   │   ├── nestjs.ts
+│   │   └── ...
+│   ├── plugins/            # Built-in plugins
+│   │   ├── sampling.ts
+│   │   ├── redaction.ts
+│   │   └── ...
+│   ├── transports/         # Output transports
+│   │   ├── console.ts
+│   │   └── file.ts
+│   └── index.ts            # Main exports
+├── tests/                  # Test files
+├── examples/               # Usage examples
+└── docs/                   # Documentation
+```
+
+### Available Scripts
+
+```bash
+# Development build (watch mode)
+bun run dev
+
+# Production build
+bun run build
+
+# Run tests
+bun run test
+
+# Run tests in watch mode
+bun run test:watch
+
+# Run tests with coverage
+bun run test:coverage
+
+# Type checking
+bun run typecheck
+
+# Linting
+bun run lint
+
+# Format code
+bun run format
+```
+
+### Making Changes
+
+1. **Write code**
+
+   Make your changes following the [Code Style](#code-style) guidelines.
+
+2. **Add tests**
+
+   All new features and bug fixes must include tests. Use the built-in testing utilities:
+
+   ```typescript
+   import { describe, expect, it } from "vitest";
+   import { createTestLogger } from "../src/testing";
+
+   describe("Logger", () => {
+     it("logs at info level", () => {
+       const { logger, transport } = createTestLogger();
+
+       logger.info("Test message", { data: 123 });
+
+       expect(transport.hasLog("info", "Test message")).toBe(true);
+       expect(transport.last()?.context?.data).toBe(123);
+     });
+   });
+   ```
+
+   For comprehensive testing examples and utilities, see the [Testing Guide](/docs/development/testing).
+
+3. **Run tests**
+
+   ```bash
+   bun run test
+   ```
+
+4. **Check types**
+
+   ```bash
+   bun run typecheck
+   ```
+
+5. **Format and lint**
+
+   ```bash
+   bun run format
+   bun run lint
+   ```
+
+### Commit Guidelines
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types:**
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, etc.)
+- `refactor`: Code refactoring
+- `perf`: Performance improvements
+- `test`: Test changes
+- `chore`: Build process or auxiliary tool changes
+
+**Examples:**
+```bash
+git commit -m "feat(middleware): add Fastify middleware"
+git commit -m "fix(logger): handle null context values"
+git commit -m "docs: update installation guide"
+git commit -m "test(redaction): add PCI compliance tests"
+```
+
+### Opening a Pull Request
+
+1. **Push your branch**
+
+   ```bash
+   git push origin feature/my-new-feature
+   ```
+
+2. **Create pull request**
+
+   - Go to your fork on GitHub
+   - Click "New Pull Request"
+   - Select your branch
+   - Fill out the PR template
+
+3. **PR checklist**
+
+   - [ ] Tests pass (`bun run test`)
+   - [ ] Types are correct (`bun run typecheck`)
+   - [ ] Code is formatted (`bun run format`)
+   - [ ] Lint passes (`bun run lint`)
+   - [ ] Documentation updated (if needed)
+   - [ ] Changelog updated (if needed)
+   - [ ] Commit messages follow convention
+
+4. **Wait for review**
+
+   Maintainers will review your PR and may request changes.
+
+## Code Style
+
+### TypeScript
+
+- Use TypeScript strict mode
+- Prefer `const` over `let`
+- Use type inference when possible
+- Export types explicitly
+
+```typescript
+// Good
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
+
+export function createLogger(options?: LoggerOptions): Logger {
+  const level = options?.level ?? "info";
+  // ...
+}
+
+// Bad
+export function createLogger(options?: any) {
+  let level = options?.level || "info";
+  // ...
+}
+```
+
+### Formatting
+
+We use Biome for formatting. Run:
+
+```bash
+bun run format
+```
+
+### Naming Conventions
+
+- **Classes**: PascalCase (`Logger`, `Redactor`)
+- **Functions**: camelCase (`createLogger`, `formatJson`)
+- **Constants**: UPPER_SNAKE_CASE (`DEFAULT_LEVEL`, `MAX_DEPTH`)
+- **Types**: PascalCase (`LogLevel`, `LogRecord`)
+- **Private fields**: prefix with `private` (`private state`)
+
+### Comments
+
+- Use JSDoc for public APIs
+- Add comments for complex logic
+- Avoid obvious comments
+
+```typescript
+/**
+ * Create a logger instance
+ *
+ * @param options - Logger configuration options
+ * @returns Logger instance
+ *
+ * @example
+ * const logger = createLogger({
+ *   service: "my-app",
+ *   level: "info",
+ * });
+ */
+export function createLogger(options?: LoggerOptions): Logger {
+  // ...
+}
+```
+
+## Testing
+
+### Test Structure
+
+```typescript
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { createTestLogger } from "../src/testing";
+
+describe("Feature", () => {
+  let logger, transport, reset;
+
+  beforeEach(() => {
+    ({ logger, transport, reset } = createTestLogger());
+  });
+
+  afterEach(() => {
+    reset(); // Clean up between tests
+  });
+
+  it("should do something", () => {
+    // Arrange & Act
+    logger.info("test", { key: "value" });
+
+    // Assert
+    expect(transport.hasLog("info", "test")).toBe(true);
+    expect(transport.last()?.context?.key).toBe("value");
+  });
+});
+```
+
+For detailed testing patterns, utilities, and examples, see the [Testing Guide](/docs/development/testing).
+
+### Test Coverage
+
+We aim for >90% test coverage. Check coverage with:
+
+```bash
+bun run test:coverage
+```
+
+### Testing Best Practices
+
+- Use `createTestLogger()` from `cenglu/testing` for logger tests
+- Test public APIs, not implementation details
+- Use descriptive test names
+- Keep tests isolated (no shared state)
+- Mock external dependencies with `MockTime` and `MockRandom`
+- Test edge cases and error conditions
+- Clean up with `reset()` in `afterEach` hooks
+
+## Performance
+
+### Performance Guidelines
+
+- Minimize allocations in hot paths
+- Use lazy evaluation where possible
+- Avoid synchronous I/O
+- Cache expensive computations
+
+## Documentation
+
+### Updating Docs
+
+Documentation is in the `docs/` directory using MDX format.
+
+```bash
+docs/
+├── index.mdx
+├── getting-started/
+│   ├── installation.mdx
+│   └── basic-usage.mdx
+└── api/
+    └── logger.mdx
+```
+
+### Documentation Style
+
+- Use clear, concise language
+- Include code examples
+- Add JSDoc comments to public APIs
+- Update README if needed
+
+## Releases
+
+Releases are handled by maintainers:
+
+1. Update version in `package.json`
+2. Update `CHANGELOG.md`
+3. Create git tag
+4. Publish to npm
+
+## Getting Help
+
+- **Issues**: [github.com/ayungavis/cenglu/issues](https://github.com/ayungavis/cenglu/issues)
+- **Discussions**: GitHub Discussions
+- **Email**: ayungavis@gmail.com
+
+## Issue Reporting
+
+### Bug Reports
+
+Include:
+
+- cenglu version
+- Node.js/Bun version
+- Operating system
+- Minimal reproduction
+- Expected vs actual behavior
+
+### Feature Requests
+
+Include:
+
+- Use case
+- Proposed API
+- Example usage
+- Alternatives considered
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.
+
+## Recognition
+
+Contributors are recognized in:
+
+- `CHANGELOG.md`
+- GitHub contributors page
+- Release notes
+
+Thank you for contributing to cenglu! 🎉

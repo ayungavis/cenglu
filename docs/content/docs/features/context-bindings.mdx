@@ -1,0 +1,749 @@
+---
+title: Context & Bindings
+description: Automatic context propagation and structured logging with AsyncLocalStorage
+---
+
+# Context & Bindings
+
+Cenglu provides powerful context management using Node.js AsyncLocalStorage, eliminating the need to manually pass context through function calls. Context automatically propagates across async operations, making request tracing and structured logging effortless.
+
+## Quick Start
+
+### Basic Context Binding
+
+Add context to individual log calls:
+
+```typescript
+import { createLogger } from "cenglu";
+
+const logger = createLogger({ service: "my-app" });
+
+logger.info("User action", { userId: 123, action: "login" });
+// Output: { level: "info", msg: "User action", context: { userId: 123, action: "login" } }
+```
+
+### Child Logger
+
+Create a logger with permanent bindings:
+
+```typescript
+const requestLogger = logger.child({ requestId: "abc-123" });
+
+requestLogger.info("Processing request");
+// Output includes: { requestId: "abc-123" }
+
+requestLogger.info("Request completed", { status: 200 });
+// Output includes: { requestId: "abc-123", status: 200 }
+```
+
+### Bound Logger (Fluent API)
+
+Temporarily bind context for a single log:
+
+```typescript
+logger.with({ userId: 123 }).info("User logged in");
+// Output includes: { userId: 123 }
+
+// Chain multiple bindings
+logger
+  .with({ userId: 123 })
+  .with({ sessionId: "xyz" })
+  .info("Session created");
+```
+
+## AsyncLocalStorage Context
+
+### Automatic Context Propagation
+
+Use `LoggerContext` to automatically propagate context across async operations:
+
+```typescript
+import { LoggerContext, createLogger } from "cenglu";
+
+const logger = createLogger({ service: "api" });
+
+app.use((req, res, next) => {
+  LoggerContext.run(
+    {
+      correlationId: req.headers["x-correlation-id"] || generateId(),
+      bindings: {
+        method: req.method,
+        path: req.path,
+      },
+    },
+    () => next()
+  );
+});
+
+// Anywhere in your code - context is automatically available
+async function processOrder(orderId: string) {
+  // This log automatically includes correlationId, method, path
+  logger.info("Processing order", { orderId });
+
+  // Add more context for nested operations
+  LoggerContext.addBindings({ orderId });
+
+  await chargePayment();
+  await sendConfirmation();
+}
+```
+
+### How It Works
+
+AsyncLocalStorage creates an isolated context for each async operation:
+
+```typescript
+// Request 1
+LoggerContext.run({ correlationId: "req-1" }, async () => {
+  logger.info("Start");     // correlationId: req-1
+  await delay(100);
+  logger.info("End");       // correlationId: req-1
+});
+
+// Request 2 (runs concurrently)
+LoggerContext.run({ correlationId: "req-2" }, async () => {
+  logger.info("Start");     // correlationId: req-2
+  await delay(50);
+  logger.info("End");       // correlationId: req-2
+});
+
+// Contexts don't interfere with each other
+```
+
+## LoggerContext API
+
+### run()
+
+Run a function within a context:
+
+```typescript
+const result = LoggerContext.run(
+  {
+    correlationId: "abc-123",
+    bindings: { userId: 42 },
+  },
+  async () => {
+    // All logs here automatically include correlationId and userId
+    logger.info("Processing");
+    return await processRequest();
+  }
+);
+```
+
+### runIsolated()
+
+Run with a fresh context (ignores parent context):
+
+```typescript
+// Parent context
+LoggerContext.run({ userId: 123 }, async () => {
+  logger.info("Parent");  // userId: 123
+
+  // Isolated context (no userId)
+  LoggerContext.runIsolated({ requestId: "abc" }, () => {
+    logger.info("Isolated");  // requestId: abc (no userId)
+  });
+});
+```
+
+### enter()
+
+Synchronously enter a context (use with caution):
+
+```typescript
+// Use in synchronous code where run() isn't suitable
+LoggerContext.enter({
+  correlationId: "sync-123",
+});
+
+logger.info("After enter");  // Includes correlationId
+```
+
+**Warning:** `enter()` affects the entire async context. Prefer `run()` for scoped contexts.
+
+### get()
+
+Get the current context:
+
+```typescript
+const context = LoggerContext.get();
+
+if (context) {
+  console.log(context.correlationId);
+  console.log(context.bindings);
+}
+```
+
+### Getters
+
+Retrieve specific context values:
+
+```typescript
+const correlationId = LoggerContext.getCorrelationId();
+const traceId = LoggerContext.getTraceId();
+const spanId = LoggerContext.getSpanId();
+const userId = LoggerContext.getUserId();
+const requestId = LoggerContext.getRequestId();
+const tenantId = LoggerContext.getTenantId();
+const bindings = LoggerContext.getBindings();
+```
+
+### Setters
+
+Modify the current context:
+
+```typescript
+LoggerContext.setCorrelationId("new-id");
+LoggerContext.setUserId("user-123");
+LoggerContext.setTraceContext("trace-id", "span-id");
+```
+
+### addBindings()
+
+Add bindings to the current context:
+
+```typescript
+LoggerContext.run({ bindings: { method: "GET" } }, () => {
+  logger.info("Start");  // method: GET
+
+  LoggerContext.addBindings({ userId: 123 });
+
+  logger.info("After");  // method: GET, userId: 123
+});
+```
+
+### removeBinding()
+
+Remove a specific binding:
+
+```typescript
+LoggerContext.addBindings({ temp: "value", keep: "this" });
+LoggerContext.removeBinding("temp");
+
+logger.info("Test");  // Only includes keep: "this"
+```
+
+## Request Context Helper
+
+### createRequestContext()
+
+Extract context from HTTP requests:
+
+```typescript
+import { LoggerContext, createRequestContext, createLogger } from "cenglu";
+
+const logger = createLogger({ service: "api" });
+
+app.use((req, res, next) => {
+  const context = createRequestContext({
+    id: req.id,
+    headers: req.headers,
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+
+  LoggerContext.run(context, () => next());
+});
+
+// All logs in this request automatically include:
+// - correlationId (from x-correlation-id header)
+// - traceId (from x-trace-id or traceparent header)
+// - spanId (from x-span-id or traceparent header)
+// - method, path, ip, userAgent
+```
+
+### Header Extraction
+
+`createRequestContext` automatically extracts:
+
+**Correlation ID** (first found):
+- `x-correlation-id`
+- `x-request-id`
+- `request-id`
+
+**Trace Context**:
+- `x-trace-id` or `traceparent` header
+- `x-span-id` or `traceparent` header
+
+**W3C Trace Context** (traceparent):
+```
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+             └─ traceId ─────────────────────────┘ └─ spanId ──────┘
+```
+
+## Correlation IDs
+
+### Automatic Correlation ID
+
+Generate correlation IDs automatically:
+
+```typescript
+import { createLogger, createCorrelationIdGenerator } from "cenglu";
+
+const generateId = createCorrelationIdGenerator({
+  strategy: "uuid",  // uuid | ulid | nanoid | timestamp | custom
+  prefix: "req-",
+});
+
+const logger = createLogger({
+  service: "api",
+  correlationId: generateId,
+});
+
+// Each log gets a unique correlation ID
+logger.info("Request received");  // correlationId: req-a1b2c3d4-...
+```
+
+### Correlation ID Strategies
+
+```typescript
+import { createCorrelationIdGenerator } from "cenglu";
+
+// UUID v4 (default)
+const uuidGen = createCorrelationIdGenerator({ strategy: "uuid" });
+// req-a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+// ULID (sortable, timestamp-based)
+const ulidGen = createCorrelationIdGenerator({ strategy: "ulid" });
+// req-01ARZ3NDEKTSV4RRFFQ69G5FAV
+
+// NanoID (shorter, URL-safe)
+const nanoidGen = createCorrelationIdGenerator({ strategy: "nanoid" });
+// req-V1StGXR8_Z5jdHi6B-myT
+
+// Timestamp-based
+const timestampGen = createCorrelationIdGenerator({ strategy: "timestamp" });
+// req-1705334400000-abc123
+
+// Custom generator
+const customGen = createCorrelationIdGenerator({
+  strategy: "custom",
+  generator: () => `custom-${Date.now()}`,
+});
+```
+
+## Child Logger vs Bound Logger
+
+### Child Logger
+
+Creates a new logger instance with permanent bindings:
+
+```typescript
+const child = logger.child({ requestId: "abc-123" });
+
+child.info("Start");      // Includes requestId
+child.error("Failed");    // Includes requestId
+
+// Child loggers share transports and config
+// But have independent bindings
+```
+
+**Use when:**
+- Permanent context for the lifetime of an object
+- Request-scoped loggers
+- Module-specific loggers
+- Need a full logger instance
+
+**Characteristics:**
+- New logger instance
+- Shares transports, adapters, plugins
+- Bindings are permanent
+- Can create sub-children
+- Slightly more memory overhead
+
+### Bound Logger
+
+Lightweight temporary context binding:
+
+```typescript
+logger.with({ userId: 123 }).info("User action");
+
+// Chainable
+logger
+  .with({ userId: 123 })
+  .with({ sessionId: "xyz" })
+  .info("Action");
+
+// Doesn't persist
+logger.info("Next log");  // No userId or sessionId
+```
+
+**Use when:**
+- One-off context binding
+- Fluent API style
+- Temporary context
+- Performance-critical code (lighter than child)
+
+**Characteristics:**
+- Lightweight wrapper
+- Bindings only apply to chained calls
+- Chainable
+- Less memory overhead
+- Can create child logger from bound logger
+
+### Comparison
+
+```typescript
+// Child logger (permanent bindings)
+const child = logger.child({ module: "auth" });
+child.info("Log 1");  // Includes module: auth
+child.info("Log 2");  // Includes module: auth
+
+// Bound logger (temporary bindings)
+logger.with({ module: "auth" }).info("Log 1");  // Includes module: auth
+logger.info("Log 2");  // No module field
+
+// Child from bound
+const bound = logger.with({ temp: "value" });
+const child2 = bound.child({ permanent: "value" });
+child2.info("Test");  // Includes both temp and permanent
+```
+
+## Context Binding Patterns
+
+### Request-Scoped Context
+
+```typescript
+import { LoggerContext, createRequestContext } from "cenglu";
+
+app.use((req, res, next) => {
+  const context = createRequestContext({
+    id: req.id,
+    headers: req.headers,
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+  });
+
+  LoggerContext.run(context, () => next());
+});
+
+// All route handlers automatically have context
+app.get("/users/:id", async (req, res) => {
+  // Automatically includes correlationId, method, path, ip
+  logger.info("Fetching user", { userId: req.params.id });
+
+  const user = await db.users.findById(req.params.id);
+
+  logger.info("User found", { username: user.name });
+  res.json(user);
+});
+```
+
+### User Context
+
+```typescript
+// After authentication
+app.use(authenticateUser);
+
+app.use((req, res, next) => {
+  if (req.user) {
+    LoggerContext.setUserId(req.user.id);
+    LoggerContext.addBindings({
+      username: req.user.username,
+      role: req.user.role,
+    });
+  }
+  next();
+});
+
+// All logs now include user information
+logger.info("User action");  // Includes userId, username, role
+```
+
+### Multi-Tenant Context
+
+```typescript
+app.use((req, res, next) => {
+  const tenantId = req.headers["x-tenant-id"];
+
+  if (tenantId) {
+    LoggerContext.run({ tenantId, bindings: { tenantId } }, () => next());
+  } else {
+    next();
+  }
+});
+
+// All logs include tenant information
+logger.info("Database query");  // Includes tenantId
+```
+
+### Background Job Context
+
+```typescript
+import { LoggerContext } from "cenglu";
+
+async function processJob(job) {
+  LoggerContext.run(
+    {
+      correlationId: job.id,
+      bindings: {
+        jobType: job.type,
+        jobId: job.id,
+      },
+    },
+    async () => {
+      logger.info("Job started");
+
+      try {
+        await executeJob(job);
+        logger.info("Job completed");
+      } catch (error) {
+        logger.error("Job failed", error);
+      }
+    }
+  );
+}
+
+// All logs in job execution include jobType and jobId
+```
+
+### Distributed Tracing
+
+```typescript
+import { LoggerContext } from "cenglu";
+
+app.use((req, res, next) => {
+  // Extract trace context from headers
+  const traceId = req.headers["x-trace-id"] || generateTraceId();
+  const spanId = req.headers["x-span-id"] || generateSpanId();
+
+  LoggerContext.run(
+    {
+      traceId,
+      spanId,
+      bindings: { traceId, spanId },
+    },
+    () => next()
+  );
+});
+
+// All logs include trace context
+logger.info("Service call");  // Includes traceId, spanId
+
+// Propagate to downstream services
+async function callDownstream() {
+  const traceId = LoggerContext.getTraceId();
+  const spanId = generateSpanId();
+
+  await fetch("https://api.example.com", {
+    headers: {
+      "x-trace-id": traceId,
+      "x-span-id": spanId,
+    },
+  });
+}
+```
+
+## Middleware Integration
+
+### Express
+
+```typescript
+import { LoggerContext, createRequestContext, createLogger } from "cenglu";
+
+const logger = createLogger({ service: "api" });
+
+app.use((req, res, next) => {
+  const context = createRequestContext({
+    headers: req.headers,
+    method: req.method,
+    url: req.url,
+    ip: req.ip,
+  });
+
+  LoggerContext.run(context, () => next());
+});
+
+// Alternative: Use built-in middleware
+import { expressMiddleware } from "cenglu/middleware";
+
+app.use(expressMiddleware(logger));
+```
+
+### Fastify
+
+```typescript
+import { LoggerContext, createRequestContext } from "cenglu";
+
+fastify.addHook("onRequest", async (request, reply) => {
+  const context = createRequestContext({
+    headers: request.headers,
+    method: request.method,
+    url: request.url,
+    ip: request.ip,
+  });
+
+  LoggerContext.enter(context);
+});
+```
+
+### NestJS
+
+```typescript
+import { Injectable, NestMiddleware } from "@nestjs/common";
+import { LoggerContext, createRequestContext } from "cenglu";
+
+@Injectable()
+export class LoggerContextMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: () => void) {
+    const context = createRequestContext({
+      headers: req.headers,
+      method: req.method,
+      url: req.url,
+    });
+
+    LoggerContext.run(context, () => next());
+  }
+}
+```
+
+## Performance
+
+### Overhead
+
+```
+No context:              0.010ms per log
+With context (manual):   0.012ms per log (+20%)
+With AsyncLocalStorage:  0.013ms per log (+30%)
+Child logger:            0.014ms per log (+40%)
+Bound logger:            0.011ms per log (+10%)
+```
+
+### Best Practices
+
+1. **Use AsyncLocalStorage for requests**: Automatic propagation worth the small overhead
+2. **Prefer bound logger for temporary context**: Lighter than child logger
+3. **Use child logger for persistent context**: Module or request-scoped
+4. **Avoid excessive context size**: Keep bindings lean
+5. **Don't create child loggers in hot paths**: Reuse loggers when possible
+
+## Testing
+
+### Mock Context
+
+```typescript
+import { LoggerContext } from "cenglu";
+import { test, expect } from "vitest";
+
+test("logs include context", () => {
+  const logs: any[] = [];
+
+  const logger = createLogger({
+    adapters: [{ name: "test", handle: (record) => logs.push(record) }],
+  });
+
+  LoggerContext.run({ bindings: { userId: 123 } }, () => {
+    logger.info("Test message");
+  });
+
+  expect(logs[0].context.userId).toBe(123);
+});
+```
+
+### Test Context Propagation
+
+```typescript
+test("context propagates across async operations", async () => {
+  const logs: any[] = [];
+
+  const logger = createLogger({
+    adapters: [{ name: "test", handle: (record) => logs.push(record) }],
+  });
+
+  await LoggerContext.run({ correlationId: "test-123" }, async () => {
+    logger.info("Start");
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    logger.info("End");
+  });
+
+  expect(logs[0].correlationId).toBe("test-123");
+  expect(logs[1].correlationId).toBe("test-123");
+});
+```
+
+## Troubleshooting
+
+### Context Not Propagating
+
+**Problem:** Context not available in nested functions
+
+**Solutions:**
+
+1. Ensure `useAsyncContext` is enabled:
+   ```typescript
+   const logger = createLogger({
+     useAsyncContext: true,  // Default
+   });
+   ```
+
+2. Use `run()` instead of `enter()`:
+   ```typescript
+   // Good: Scoped context
+   LoggerContext.run({ ... }, () => next());
+
+   // Bad: Can leak across requests
+   LoggerContext.enter({ ... });
+   next();
+   ```
+
+3. Check for context-breaking operations:
+   ```typescript
+   // These may break context:
+   - process.nextTick() without proper context
+   - Native modules that don't preserve async context
+   - Worker threads (separate context)
+   ```
+
+### Duplicate Context Fields
+
+**Problem:** Same field in multiple contexts
+
+**Solutions:**
+
+1. Context merges in order:
+   ```typescript
+   logger.child({ userId: 1 })
+     .with({ userId: 2 })  // userId: 2 wins
+     .info("Test");
+   ```
+
+2. Manual context takes precedence:
+   ```typescript
+   LoggerContext.run({ userId: 1 }, () => {
+     logger.info("Test", { userId: 2 });  // userId: 2 in output
+   });
+   ```
+
+### Performance Issues
+
+**Problem:** Logging is slow with context
+
+**Solutions:**
+
+1. Reduce context size:
+   ```typescript
+   // Bad: Large nested objects
+   LoggerContext.run({ user: entireUserObject }, ...);
+
+   // Good: Only needed fields
+   LoggerContext.run({ userId: user.id }, ...);
+   ```
+
+2. Reuse child loggers:
+   ```typescript
+   // Bad: Create in loop
+   for (const item of items) {
+     const child = logger.child({ itemId: item.id });
+     child.info("Processing");
+   }
+
+   // Good: Use bound logger
+   for (const item of items) {
+     logger.with({ itemId: item.id }).info("Processing");
+   }
+   ```

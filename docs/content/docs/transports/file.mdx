@@ -1,0 +1,758 @@
+---
+title: File Transport
+description: Write logs to files with automatic rotation and compression
+---
+
+# File Transport
+
+The file transport writes logs to disk with automatic rotation by size and time, compression, and retention policies. It's ideal for production environments where log persistence and management are critical.
+
+## Quick Start
+
+Basic file logging:
+
+```typescript
+import { createLogger, createFileTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      separateErrors: true,
+    }),
+  ],
+});
+
+logger.info("Application started");
+// Writes to: ./logs/info-2024-01-15.log
+
+logger.error("Something failed");
+// Writes to: ./logs/error-2024-01-15.log
+```
+
+## Simple Rotating Transport
+
+For most use cases, use `createRotatingFileTransport`:
+
+```typescript
+import { createLogger, createRotatingFileTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    createRotatingFileTransport({
+      path: "./logs/app-%DATE%.log",
+      maxSize: "10m",      // Rotate at 10 MB
+      maxFiles: 14,        // Keep 14 files
+      compress: true,      // Compress rotated files
+    }),
+  ],
+});
+```
+
+**Output files:**
+```
+logs/
+├── app-2024-01-15.log          (current)
+├── app-2024-01-14.log.gz       (compressed)
+├── app-2024-01-13.log.gz
+└── app-2024-01-12.log.gz
+```
+
+## Configuration
+
+### Basic File Transport
+
+```typescript
+import { createFileTransport } from "cenglu";
+
+const transport = createFileTransport({
+  // Enable/disable transport
+  enabled: true,
+
+  // Log directory
+  dir: "./logs",
+
+  // Separate error logs into different files
+  separateErrors: true,
+
+  // Custom filename function
+  filename: ({ date, level, sequence }) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const seq = sequence > 0 ? `.${sequence}` : "";
+    return `${level}-${year}-${month}-${day}${seq}.log`;
+  },
+
+  // Rotation policy
+  rotation: {
+    intervalDays: 1,              // Rotate daily
+    maxBytes: 10 * 1024 * 1024,   // Rotate at 10 MB
+    maxFiles: 10,                 // Keep 10 files per level
+    compress: "gzip",             // Compress rotated files
+    retentionDays: 30,            // Delete files older than 30 days
+  },
+});
+```
+
+### Rotating File Transport
+
+```typescript
+import { createRotatingFileTransport } from "cenglu";
+
+const transport = createRotatingFileTransport({
+  // File path with date placeholder
+  path: "./logs/app-%DATE%.log",
+
+  // Maximum file size before rotation
+  maxSize: "10m",        // 10 MB (supports: b, k, m, g)
+
+  // Maximum number of files to keep
+  maxFiles: 14,
+
+  // Compress rotated files
+  compress: true,        // gzip compression
+});
+```
+
+**Date placeholders:**
+- `%DATE%` - Full date (YYYY-MM-DD)
+- `%YEAR%` - Year (YYYY)
+- `%MONTH%` - Month (MM)
+- `%DAY%` - Day (DD)
+
+## Rotation Strategies
+
+### Time-Based Rotation
+
+Rotate logs daily:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      rotation: {
+        intervalDays: 1,      // Rotate every day
+        maxBytes: 0,          // No size limit
+      },
+    }),
+  ],
+});
+```
+
+**Output:**
+```
+logs/
+├── info-2024-01-15.log
+├── info-2024-01-14.log
+├── info-2024-01-13.log
+├── error-2024-01-15.log
+└── error-2024-01-14.log
+```
+
+### Size-Based Rotation
+
+Rotate when file reaches size limit:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      rotation: {
+        intervalDays: 0,                // No time-based rotation
+        maxBytes: 10 * 1024 * 1024,     // 10 MB
+      },
+    }),
+  ],
+});
+```
+
+**Output:**
+```
+logs/
+├── info-2024-01-15.log         (< 10 MB)
+├── info-2024-01-15.001.log     (10 MB, rotated)
+├── info-2024-01-15.002.log     (10 MB, rotated)
+└── error-2024-01-15.log
+```
+
+### Combined Rotation
+
+Rotate by both time and size:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      rotation: {
+        intervalDays: 1,              // New file each day
+        maxBytes: 10 * 1024 * 1024,   // Rotate at 10 MB
+      },
+    }),
+  ],
+});
+```
+
+**Behavior:**
+- New file created each day
+- If file exceeds 10 MB during the day, rotate with sequence number
+- Next day starts fresh at sequence 0
+
+## Separate Error Logs
+
+Keep errors in separate files for easier monitoring:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      separateErrors: true,  // Default: true
+    }),
+  ],
+});
+
+logger.info("Normal log");   // -> logs/info-2024-01-15.log
+logger.error("Error log");   // -> logs/error-2024-01-15.log
+```
+
+**Benefits:**
+- Easy error monitoring
+- Simpler alerting (watch error log only)
+- Reduced noise in info logs
+
+## Compression
+
+Compress rotated files to save disk space:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      rotation: {
+        intervalDays: 1,
+        compress: "gzip",  // Compress rotated files
+      },
+    }),
+  ],
+});
+```
+
+**Output:**
+```
+logs/
+├── info-2024-01-15.log         (current, uncompressed)
+├── info-2024-01-14.log.gz      (compressed)
+├── info-2024-01-13.log.gz      (compressed)
+└── info-2024-01-12.log.gz      (compressed)
+```
+
+**Compression details:**
+- Uses gzip compression
+- Compressed asynchronously (non-blocking)
+- Original file deleted after successful compression
+- Typical compression ratio: 10:1 for JSON logs
+
+## Retention Policy
+
+Automatically delete old log files:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      rotation: {
+        intervalDays: 1,
+        retentionDays: 30,  // Delete files older than 30 days
+      },
+    }),
+  ],
+});
+```
+
+**Behavior:**
+- Runs cleanup once per day
+- Deletes files older than `retentionDays`
+- Based on file modification time
+- Affects both `.log` and `.gz` files
+
+## File Limits
+
+Limit the number of files kept:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      rotation: {
+        intervalDays: 1,
+        maxFiles: 7,  // Keep only 7 files per level
+      },
+    }),
+  ],
+});
+```
+
+**Behavior:**
+- Enforced after each rotation
+- Oldest files deleted first
+- Applied per log level (if `separateErrors: true`)
+- Works with both `.log` and `.gz` files
+
+## Custom Filenames
+
+Customize log file naming:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+      filename: ({ date, level, sequence }) => {
+        const timestamp = date.getTime();
+        const seq = sequence > 0 ? `-${sequence}` : "";
+        return `${level}-${timestamp}${seq}.log`;
+      },
+    }),
+  ],
+});
+```
+
+**Output:**
+```
+logs/
+├── info-1705334400000.log
+├── info-1705334400000-1.log
+└── error-1705334400000.log
+```
+
+### Structured Filenames
+
+Use custom structure:
+
+```typescript
+filename: ({ date, level, sequence }) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  const seq = sequence > 0 ? `.${String(sequence).padStart(3, "0")}` : "";
+
+  return `${year}/${month}/${level}-${year}-${month}-${day}${seq}.log`;
+}
+
+// Output:
+// logs/2024/01/info-2024-01-15.log
+// logs/2024/01/info-2024-01-15.001.log
+// logs/2024/01/error-2024-01-15.log
+```
+
+## Multiple Transports
+
+Write to both console and file:
+
+```typescript
+import { createLogger, createConsoleTransport, createFileTransport } from "cenglu";
+
+const logger = createLogger({
+  transports: [
+    // Console for development
+    createConsoleTransport({
+      enabled: process.env.NODE_ENV !== "production",
+    }),
+
+    // File for production
+    createFileTransport({
+      enabled: process.env.NODE_ENV === "production",
+      dir: "./logs",
+      rotation: {
+        intervalDays: 1,
+        maxBytes: 10 * 1024 * 1024,
+        compress: "gzip",
+        retentionDays: 30,
+      },
+    }),
+  ],
+});
+```
+
+## Size Parsing
+
+The `maxSize` option supports human-readable sizes:
+
+```typescript
+createRotatingFileTransport({
+  path: "./logs/app.log",
+  maxSize: "10m",    // 10 megabytes
+});
+```
+
+**Supported units:**
+- `b` or `B` - Bytes (e.g., `1024b`)
+- `k` or `K` - Kilobytes (e.g., `100k`)
+- `m` or `M` - Megabytes (e.g., `10m`)
+- `g` or `G` - Gigabytes (e.g., `1g`)
+
+**Examples:**
+```typescript
+maxSize: 1024         // 1024 bytes
+maxSize: "1024"       // 1024 bytes
+maxSize: "1k"         // 1024 bytes
+maxSize: "1.5m"       // 1.5 megabytes
+maxSize: "10mb"       // 10 megabytes
+maxSize: "1gb"        // 1 gigabyte
+```
+
+## Performance
+
+### Best Practices
+
+1. **Use rotation**: Prevent files from growing too large
+2. **Enable compression**: Save disk space (10:1 ratio typical)
+3. **Set retention policy**: Automatically clean up old logs
+4. **Separate errors**: Easier monitoring and alerting
+5. **Monitor disk space**: Ensure sufficient space for logs
+
+## Graceful Shutdown
+
+Ensure all logs are written before exit:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+    }),
+  ],
+});
+
+async function shutdown() {
+  console.log("Shutting down...");
+
+  // Flush pending writes
+  await logger.flush();
+
+  // Close file streams
+  await logger.close();
+
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+```
+
+## Error Handling
+
+File transport handles disk errors gracefully:
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: "./logs",
+    }),
+  ],
+});
+
+// Disk full, permissions error, etc.
+logger.info("This will fail gracefully");
+// Error written to stderr, application continues
+```
+
+**Error behavior:**
+- Errors written to `process.stderr`
+- Application doesn't crash
+- Subsequent logs still attempted
+- Prefix: `[cenglu:FileTransport] Error: <message>`
+
+## Environment Variables
+
+```bash
+# Log directory
+LOG_DIR=./logs node app.js
+
+# Rotation settings
+LOG_ROTATE_DAYS=1
+LOG_MAX_BYTES=10485760      # 10 MB
+LOG_MAX_FILES=7
+LOG_COMPRESS=gzip
+LOG_RETENTION_DAYS=30
+```
+
+**Usage in configuration:**
+
+```typescript
+const logger = createLogger({
+  transports: [
+    createFileTransport({
+      dir: process.env.LOG_DIR || "./logs",
+      rotation: {
+        intervalDays: parseInt(process.env.LOG_ROTATE_DAYS || "1", 10),
+        maxBytes: parseInt(process.env.LOG_MAX_BYTES || "10485760", 10),
+        maxFiles: parseInt(process.env.LOG_MAX_FILES || "7", 10),
+        compress: process.env.LOG_COMPRESS === "gzip" ? "gzip" : false,
+        retentionDays: parseInt(process.env.LOG_RETENTION_DAYS || "30", 10),
+      },
+    }),
+  ],
+});
+```
+
+## Testing
+
+### Mock File Transport
+
+```typescript
+import { createLogger } from "cenglu";
+import { test, expect } from "vitest";
+
+test("logs to file transport", async () => {
+  const logs: string[] = [];
+
+  const mockTransport = {
+    write: (_record: any, formatted: string) => {
+      logs.push(formatted);
+    },
+    flush: async () => {},
+    close: async () => {},
+  };
+
+  const logger = createLogger({
+    transports: [mockTransport],
+  });
+
+  logger.info("Test message");
+  await logger.flush();
+
+  expect(logs).toHaveLength(1);
+  expect(logs[0]).toContain("Test message");
+});
+```
+
+### Test Rotation
+
+```typescript
+import { createFileTransport } from "cenglu";
+import { existsSync, readFileSync, readdirSync } from "fs";
+import { test, expect, afterEach } from "vitest";
+
+test("rotates file when size limit reached", async () => {
+  const transport = createFileTransport({
+    dir: "./test-logs",
+    rotation: {
+      maxBytes: 100,  // Small size for testing
+      intervalDays: 0,
+    },
+  });
+
+  // Write logs until rotation
+  for (let i = 0; i < 50; i++) {
+    transport.write(
+      { level: "info", msg: "test", time: Date.now(), context: {} } as any,
+      "test log message\n",
+      false
+    );
+  }
+
+  await transport.flush();
+
+  const files = readdirSync("./test-logs").filter((f) => f.endsWith(".log"));
+  expect(files.length).toBeGreaterThan(1);
+
+  await transport.close();
+});
+
+afterEach(async () => {
+  // Cleanup test logs
+  const { rmSync } = await import("fs");
+  rmSync("./test-logs", { recursive: true, force: true });
+});
+```
+
+## Troubleshooting
+
+### Permission Errors
+
+**Problem:** `EACCES: permission denied` error
+
+**Solutions:**
+
+1. Check directory permissions:
+   ```bash
+   chmod 755 ./logs
+   ```
+
+2. Use writable directory:
+   ```typescript
+   const logger = createLogger({
+     transports: [
+       createFileTransport({
+         dir: "/tmp/logs",  // Use temp directory
+       }),
+     ],
+   });
+   ```
+
+3. Run with correct user:
+   ```bash
+   chown -R myuser:mygroup ./logs
+   ```
+
+### Disk Full
+
+**Problem:** `ENOSPC: no space left on device`
+
+**Solutions:**
+
+1. Enable compression:
+   ```typescript
+   rotation: {
+     compress: "gzip",  // 10:1 compression ratio
+   }
+   ```
+
+2. Reduce retention:
+   ```typescript
+   rotation: {
+     retentionDays: 7,  // Keep fewer days
+   }
+   ```
+
+3. Reduce max files:
+   ```typescript
+   rotation: {
+     maxFiles: 5,  // Keep fewer files
+   }
+   ```
+
+4. Monitor disk space:
+   ```bash
+   df -h ./logs
+   ```
+
+### Files Not Rotating
+
+**Problem:** Log files grow indefinitely
+
+**Solutions:**
+
+1. Check rotation config:
+   ```typescript
+   rotation: {
+     intervalDays: 1,              // Must be > 0
+     maxBytes: 10 * 1024 * 1024,   // Must be > 0
+   }
+   ```
+
+2. Verify file size:
+   ```bash
+   ls -lh ./logs
+   ```
+
+3. Check for errors:
+   ```typescript
+   // Errors printed to stderr
+   ```
+
+### Compression Not Working
+
+**Problem:** Rotated files not compressed
+
+**Solutions:**
+
+1. Enable compression:
+   ```typescript
+   rotation: {
+     compress: "gzip",  // Not false
+   }
+   ```
+
+2. Check for errors:
+   ```bash
+   # Look for compression errors in stderr
+   node app.js 2>&1 | grep compression
+   ```
+
+3. Verify gzip available:
+   ```bash
+   which gzip
+   ```
+
+## Production Configuration
+
+Recommended production setup:
+
+```typescript
+import { createLogger, createFileTransport } from "cenglu";
+
+const logger = createLogger({
+  service: process.env.SERVICE_NAME,
+  env: "production",
+  level: "info",
+
+  transports: [
+    createFileTransport({
+      enabled: true,
+      dir: process.env.LOG_DIR || "./logs",
+      separateErrors: true,
+
+      rotation: {
+        // Rotate daily
+        intervalDays: 1,
+
+        // Also rotate at 10 MB
+        maxBytes: 10 * 1024 * 1024,
+
+        // Keep 7 days of daily logs
+        maxFiles: 7,
+
+        // Compress rotated files (saves ~90% disk space)
+        compress: "gzip",
+
+        // Delete logs older than 30 days
+        retentionDays: 30,
+      },
+    }),
+  ],
+});
+```
+
+## Docker Considerations
+
+When using file transport in Docker:
+
+```dockerfile
+# Create log directory
+RUN mkdir -p /app/logs && chown node:node /app/logs
+
+# Mount volume for persistence
+VOLUME ["/app/logs"]
+
+# Run as non-root user
+USER node
+```
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  app:
+    image: my-app
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      LOG_DIR: /app/logs
+```
+
+**Consider:**
+- Console transport is typically better for containerized apps
+- Use volumes for log persistence
+- Mount logs to host or use log aggregation services
+- File transport adds complexity in orchestrated environments
