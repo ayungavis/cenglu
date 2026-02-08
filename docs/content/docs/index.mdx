@@ -153,23 +153,6 @@ describe("UserService", () => {
 
 Includes mock time control, deterministic sampling, custom matchers for Vitest/Jest, and assertion helpers. See the [Testing Guide](/docs/development/testing) for comprehensive examples.
 
-## Comparison with Other Loggers
-
-| Feature | Cenglu | Pino | Winston | Bunyan |
-|---------|--------|------|---------|--------|
-| **Zero Dependencies** | ✅ | ❌ (~5 deps) | ❌ (~15 deps) | ❌ (~10 deps) |
-| **Bundle Size** | < 500KB | ~100KB | ~1MB | ~500KB |
-| **TypeScript First** | ✅ Full | ⚠️ Partial | ⚠️ Partial | ❌ |
-| **Built-in Redaction** | ✅ | ❌ | ❌ | ❌ |
-| **AsyncLocalStorage** | ✅ | ❌ | ❌ | ❌ |
-| **Plugin System** | ✅ Hooks | ⚠️ Limited | ⚠️ Limited | ❌ |
-| **Middleware** | ✅ 4 frameworks | ⚠️ Express only | ❌ | ❌ |
-| **Pretty Logs** | ✅ Built-in | ⚠️ Requires pino-pretty | ✅ | ⚠️ Limited |
-| **Sampling** | ✅ Built-in | ❌ | ❌ | ❌ |
-| **Format Support** | 5 formats | 1 (JSON) | 3 formats | 1 (JSON) |
-| **File Rotation** | ✅ Built-in | ⚠️ Requires pino-roll | ⚠️ Requires extra package | ❌ |
-| **Performance** | ⚡ Fast | ⚡⚡ Fastest | ⚠️ Slower | ⚡ Fast |
-
 ## Community & Support
 
 - **GitHub**: [ayungavis/cenglu](https://github.com/ayungavis/cenglu)
