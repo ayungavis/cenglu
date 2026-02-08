@@ -80,7 +80,7 @@ export {
   Logger as default,
 } from "./logger";
 // Middlewares
-export * from "./middleware";
+export * from "./middleware/index";
 // Plugins
 export type { BatchingPluginOptions } from "./plugins/batching";
 export {
